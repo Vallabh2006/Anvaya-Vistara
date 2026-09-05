@@ -1,0 +1,10 @@
+{% extends "shell.html" %}
+{% block page_title %}{{ _('nav.dashboard') }}{% endblock %}
+{% block sidebar_nav %}{% include "region/_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-header"><h1>{{ _('nav.dashboard') }}</h1></div>
+<div class="cards">
+    <div class="card"><div class="card-value">-</div><div class="card-label">Loading...</div></div>
+</div>
+<div class="notice" style="margin-top: var(--sp-6);">Dashboard data will be populated in Phase 7.</div>
+{% endblock %}

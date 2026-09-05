@@ -1,0 +1,473 @@
+import json
+import random
+import secrets
+import time
+from datetime import datetime
+import bcrypt
+from flask import Blueprint, render_template, request, redirect, url_for, session, flash, jsonify
+
+from utils.db import query_db, execute_db
+from utils.auth_helpers import get_current_user, login_required
+from utils.audit import log_audit
+from utils.email_helper import send_email, send_otp_email, send_password_reset_email, mask_email
+from utils.id_generator import generate_patient_id
+
+auth_bp = Blueprint('auth', __name__, template_folder='../../templates/auth')
+
+
+def parse_flexible_dob(dob_str):
+    dob_str = (dob_str or '').strip()
+    if not dob_str:
+        return None
+    for fmt in ('%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%Y/%m/%d', '%d.%m.%Y', '%m/%d/%Y'):
+        try:
+            return datetime.strptime(dob_str, fmt).strftime('%Y-%m-%d')
+        except ValueError:
+            pass
+    return dob_str
+
+
+@auth_bp.route('/login', methods=['GET', 'POST'])
+def login():
+    if 'user_id' in session:
+        return redirect(url_for('auth.app_redirect'))
+
+    active_tab = request.args.get('tab', 'username')
+    form_data = {}
+
+    if request.method == 'POST':
+        login_type = request.form.get('login_type', 'username')
+        form_data = request.form
+        
+        if login_type == 'email':
+            active_tab = 'email'
+            email = request.form.get('email', '').strip().lower()
+            if not email:
+                flash('Please enter your registered email address.', 'error')
+                return render_template('login.html', active_tab='email', form_data=form_data)
+                
+            user = query_db('SELECT * FROM users WHERE LOWER(email) = %s AND is_active = 1', (email,), one=True)
+            if not user:
+                flash('No active account found with this email address.', 'error')
+                return render_template('login.html', active_tab='email', form_data=form_data)
+                
+            otp_code = str(secrets.randbelow(900000) + 100000)
+            session['pending_otp'] = otp_code
+            session['pending_otp_expires'] = time.time() + 600
+            session['pending_user_id'] = user['id']
+            session['pending_email'] = user['email']
+            session['pending_fullname'] = user['full_name'] or user['username']
+            session['otp_flow'] = 'login'
+            
+            send_otp_email(user['email'], user['full_name'] or user['username'], otp_code)
+            log_audit('login_otp_initiated', 'user', user['id'])
+            flash(f'Verification code sent to {mask_email(user["email"])}. Please enter the 6-digit OTP to complete login.', 'info')
+            return redirect(url_for('auth.verify_otp'))
+
+        else:
+            identifier = request.form.get('username', '').strip()
+            password = request.form.get('password', '')
+
+            if not identifier:
+                flash('Please enter your username or registered email.', 'error')
+                return render_template('login.html', active_tab='username', form_data=form_data)
+
+            if '@' in identifier:
+                user = query_db('SELECT * FROM users WHERE LOWER(email) = %s AND is_active = 1', (identifier.lower(),), one=True)
+                if not user:
+                    flash('No active account found with this email address.', 'error')
+                    return render_template('login.html', active_tab='email', form_data=form_data)
+                
+                otp_code = str(secrets.randbelow(900000) + 100000)
+                session['pending_otp'] = otp_code
+                session['pending_otp_expires'] = time.time() + 600
+                session['pending_user_id'] = user['id']
+                session['pending_email'] = user['email']
+                session['pending_fullname'] = user['full_name'] or user['username']
+                session['otp_flow'] = 'login'
+
+                send_otp_email(user['email'], user['full_name'] or user['username'], otp_code)
+                log_audit('login_otp_initiated', 'user', user['id'])
+                flash(f'Logging in with email requires OTP verification. A 6-digit code was sent to {mask_email(user["email"])}.', 'info')
+                return redirect(url_for('auth.verify_otp'))
+
+            if not password:
+                flash('Please enter your password.', 'error')
+                return render_template('login.html', active_tab='username', form_data=form_data)
+
+            user = query_db('SELECT * FROM users WHERE username = %s AND is_active = 1', (identifier,), one=True)
+            if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+                session.clear()
+                session['user_id'] = user['id']
+                session['username'] = user['username']
+                session['role'] = user['role']
+                log_audit('login_success', 'user', user['id'])
+                
+                next_url = request.args.get('next')
+                if next_url:
+                    return redirect(next_url)
+                    
+                flash(f'Welcome back, {user.get("full_name") or user.get("username")}!', 'success')
+                return redirect(url_for('auth.app_redirect'))
+            else:
+                flash('Invalid username or password.', 'error')
+                return render_template('login.html', active_tab='username', form_data=form_data)
+
+    return render_template('login.html', active_tab=active_tab, form_data=form_data)
+
+
+@auth_bp.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if 'user_id' in session:
+        return redirect(url_for('auth.app_redirect'))
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        full_name = request.form.get('full_name', '').strip()
+        password = request.form.get('password', '')
+        confirm = request.form.get('confirm_password', '')
+        role = 'patient'
+        phone = request.form.get('phone', '').strip()
+        email = request.form.get('email', '').strip()
+        raw_dob = request.form.get('dob', '').strip()
+        dob = parse_flexible_dob(raw_dob)
+        gender = request.form.get('gender', 'Other').strip()
+        blood_group = request.form.get('blood_group', '').strip()
+        address = request.form.get('address', '').strip()
+
+        errors = []
+        import re
+        if not username or not full_name or not password:
+            errors.append('Please fill in all mandatory fields.')
+        elif not re.match(r'^[a-z0-9._]{3,30}$', username):
+            errors.append('Username must be 3-30 characters long and can only contain lowercase letters, numbers, dots (.), and underscores (_).')
+        if not email:
+            errors.append('Email address is required.')
+        if not dob:
+            errors.append('Date of birth is required.')
+        if not blood_group:
+            errors.append('Blood group is required.')
+        if password != confirm:
+            errors.append('Passwords do not match.')
+        if len(password) < 8:
+            errors.append('Password must be at least 8 characters.')
+
+        existing_user = query_db('SELECT id FROM users WHERE username = %s', (username,), one=True)
+        if existing_user:
+            errors.append('Username is already taken.')
+
+        existing_email = query_db('SELECT id FROM users WHERE email = %s', (email,), one=True)
+        if existing_email:
+            errors.append('An account with this email address already exists.')
+
+        if errors:
+            for e in errors:
+                flash(e, 'error')
+            return render_template('signup.html', form_data=request.form)
+
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+        user_id = execute_db(
+            'INSERT INTO users (username, password_hash, full_name, role, phone, email, is_active, invite_status) VALUES (%s, %s, %s, %s, %s, %s, 1, %s)',
+            (username, hashed, full_name, role, phone or None, email, 'active')
+        )
+
+        user = query_db('SELECT * FROM users WHERE id = %s', (user_id,), one=True)
+        
+        pat_id = generate_patient_id()
+
+        default_center = query_db("SELECT id FROM centers ORDER BY id ASC LIMIT 1", one=True)
+        center_id = default_center['id'] if default_center else 'FAC-BAKROL-01'
+
+        execute_db(
+            'INSERT INTO patients (id, linked_user_id, full_name, dob, gender, phone, address, blood_group, center_id, allergies) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+            (pat_id, user['id'], full_name, dob, gender, phone or None, address or None, blood_group, center_id, json.dumps(['Not Allergic']))
+        )
+
+        otp_code = str(secrets.randbelow(900000) + 100000)
+        session['pending_otp'] = otp_code
+        session['pending_otp_expires'] = time.time() + 600
+        session['pending_user_id'] = user['id']
+        session['pending_email'] = email
+        session['pending_fullname'] = full_name
+        
+        send_otp_email(email, full_name, otp_code)
+        log_audit('signup_initiated', 'user', user['id'])
+        flash('Account created! Please enter the 6-digit verification code sent to your email.', 'info')
+        return redirect(url_for('auth.verify_otp'))
+
+    return render_template('signup.html', form_data={})
+
+
+@auth_bp.route('/verify-otp', methods=['GET', 'POST'])
+def verify_otp():
+    user_id = session.get('pending_user_id')
+    email = session.get('pending_email')
+    
+    if not user_id:
+        return redirect(url_for('auth.login'))
+
+    user = query_db('SELECT * FROM users WHERE id = %s', (user_id,), one=True)
+    if not user:
+        session.pop('pending_user_id', None)
+        return redirect(url_for('auth.login'))
+
+    if request.method == 'POST':
+        otp_entered = request.form.get('otp', '').strip()
+        expected_otp = session.get('pending_otp')
+        expires_at = session.get('pending_otp_expires', 0)
+
+        if not expected_otp or time.time() > expires_at:
+            flash('Verification code has expired. Please request a new code.', 'error')
+            return render_template('verify_otp.html', email=email, user=user)
+
+        if otp_entered == expected_otp:
+            execute_db('UPDATE users SET is_active = 1 WHERE id = %s', (user['id'],))
+            flow = session.pop('otp_flow', 'signup')
+            session.pop('pending_otp', None)
+            session.pop('pending_otp_expires', None)
+            session.pop('pending_user_id', None)
+            session.pop('pending_email', None)
+            session.pop('pending_fullname', None)
+            
+            session.clear()
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+            session['role'] = user['role']
+            log_audit('login_verified' if flow == 'login' else 'signup_verified', 'user', user['id'])
+            flash(f'Verification successful! Welcome, {user.get("full_name") or user.get("username")}.', 'success')
+            return redirect(url_for('auth.app_redirect'))
+        else:
+            flash('Incorrect 6-digit verification code. Please try again.', 'error')
+
+    return render_template('verify_otp.html', email=email, user=user)
+
+
+@auth_bp.route('/resend-otp', methods=['POST'])
+def resend_otp():
+    user_id = session.get('pending_user_id')
+    email = session.get('pending_email')
+    full_name = session.get('pending_fullname')
+
+    if not user_id or not email:
+        flash('Session expired. Please sign in or register again.', 'error')
+        return redirect(url_for('auth.login'))
+
+    otp_code = str(secrets.randbelow(900000) + 100000)
+    session['pending_otp'] = otp_code
+    session['pending_otp_expires'] = time.time() + 600
+
+    send_otp_email(email, full_name, otp_code)
+    flash(f'A fresh 6-digit verification code has been dispatched to {mask_email(email)}.', 'info')
+    return redirect(url_for('auth.verify_otp'))
+
+
+@auth_bp.route('/accept-invite/<token>', methods=['GET', 'POST'])
+def accept_invite(token):
+    if 'user_id' in session:
+        session.clear()
+
+    user = query_db('''
+        SELECT u.*, c.name as facility_name 
+        FROM users u 
+        LEFT JOIN centers c ON u.center_id = c.id 
+        WHERE u.invite_token = %s
+    ''', (token,), one=True)
+
+    if not user:
+        flash('Invalid or expired staff invitation link. Please contact system admin.', 'error')
+        return redirect(url_for('auth.login'))
+
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        confirm = request.form.get('confirm_password', '')
+        phone = request.form.get('phone', '').strip()
+
+        if not password or len(password) < 8:
+            flash('Password must be at least 8 characters.', 'error')
+            return render_template('accept_invite.html', user=user, token=token)
+
+        if password != confirm:
+            flash('Passwords do not match.', 'error')
+            return render_template('accept_invite.html', user=user, token=token)
+
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        execute_db('''
+            UPDATE users 
+            SET password_hash = %s, phone = COALESCE(NULLIF(%s, ''), phone), invite_status = 'active', is_active = 1, invite_token = NULL 
+            WHERE id = %s
+        ''', (hashed, phone, user['id']))
+
+        session['user_id'] = user['id']
+        session['role'] = user['role']
+        log_audit('staff_invite_accepted', 'user', user['id'])
+        flash('Staff account successfully activated! Welcome to your clinical dashboard.', 'success')
+        return redirect(url_for('auth.app_redirect'))
+
+    return render_template('accept_invite.html', user=user, token=token)
+
+
+@auth_bp.route('/logout', methods=['GET', 'POST'])
+def logout():
+    user_id = session.get('user_id')
+    if user_id:
+        log_audit('logout', 'user', user_id)
+    session.clear()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('auth.login'))
+
+
+@auth_bp.route('/app')
+def app_redirect():
+    if 'user_id' not in session:
+        return redirect(url_for('auth.login'))
+        
+    user = get_current_user()
+    if not user:
+        return redirect(url_for('auth.logout'))
+        
+    role = user.get('role')
+    
+    if role == 'patient':
+        return redirect(f'/patient/@{user.get("username")}')
+    elif role in ('doctor', 'nurse', 'pharmacist', 'lab_technician', 'ambulance_op', 'receptionist', 'care_taker'):
+        return redirect(f'/phc/@{user.get("username")}')
+    elif role == 'region_admin':
+        return redirect('/admin/dashboard')
+    elif role == 'system_admin':
+        return redirect(f'/admin/@{user.get("username")}')
+    else:
+        return redirect(f'/phc/@{user.get("username")}')
+
+
+@auth_bp.route('/admin-login', methods=['GET', 'POST'])
+def admin_login():
+    return login()
+
+
+@auth_bp.route('/phc-login', methods=['GET', 'POST'])
+def phc_login():
+    return login()
+
+
+@auth_bp.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    if 'user_id' in session:
+        return redirect(url_for('auth.app_redirect'))
+
+    if request.method == 'POST':
+        identifier = request.form.get('identifier', '').strip()
+        if not identifier:
+            flash('Please enter your registered email address or username.', 'error')
+            return render_template('forgot_password.html', identifier=identifier)
+
+        if '@' in identifier:
+            user = query_db('SELECT * FROM users WHERE LOWER(email) = %s AND is_active = 1', (identifier.lower(),), one=True)
+        else:
+            user = query_db('SELECT * FROM users WHERE username = %s AND is_active = 1', (identifier,), one=True)
+
+        if not user:
+            flash('No active account found matching the provided details.', 'error')
+            return render_template('forgot_password.html', identifier=identifier)
+
+        if not user.get('email'):
+            flash('This account does not have a registered email address. Please contact your system administrator.', 'error')
+            return render_template('forgot_password.html', identifier=identifier)
+
+        otp_code = str(secrets.randbelow(900000) + 100000)
+        session['reset_otp'] = otp_code
+        session['reset_otp_expires'] = time.time() + 600
+        session['reset_user_id'] = user['id']
+        session['reset_email'] = user['email']
+        session['reset_fullname'] = user['full_name'] or user['username']
+        session['reset_otp_verified'] = False
+
+        send_password_reset_email(user['email'], user['full_name'] or user['username'], otp_code)
+        log_audit('password_reset_initiated', 'user', user['id'])
+        flash(f'A 6-digit password reset verification code has been dispatched to {mask_email(user["email"])}.', 'info')
+        return redirect(url_for('auth.reset_password'))
+
+    return render_template('forgot_password.html', identifier='')
+
+
+@auth_bp.route('/reset-password', methods=['GET', 'POST'])
+def reset_password():
+    reset_user_id = session.get('reset_user_id')
+    reset_email = session.get('reset_email')
+    is_verified = session.get('reset_otp_verified', False)
+
+    if not reset_user_id:
+        flash('Password reset session expired or not started. Please initiate a reset request.', 'error')
+        return redirect(url_for('auth.forgot_password'))
+
+    user = query_db('SELECT * FROM users WHERE id = %s', (reset_user_id,), one=True)
+    if not user:
+        session.pop('reset_user_id', None)
+        session.pop('reset_otp_verified', None)
+        return redirect(url_for('auth.forgot_password'))
+
+    if request.method == 'POST':
+        if not is_verified:
+            otp_entered = request.form.get('otp', '').strip()
+            expected_otp = session.get('reset_otp')
+            expires_at = session.get('reset_otp_expires', 0)
+
+            if not expected_otp or time.time() > expires_at:
+                flash('The verification code has expired. Please request a new reset code.', 'error')
+                return render_template('reset_password.html', email=mask_email(reset_email), user=user, is_verified=False)
+
+            if otp_entered != expected_otp:
+                flash('Incorrect 6-digit verification code. Please check your email and try again.', 'error')
+                return render_template('reset_password.html', email=mask_email(reset_email), user=user, is_verified=False)
+
+            session['reset_otp_verified'] = True
+            flash('Verification code confirmed! You can now create your new password.', 'success')
+            return redirect(url_for('auth.reset_password'))
+
+        else:
+            new_password = request.form.get('new_password', '')
+            confirm_password = request.form.get('confirm_password', '')
+
+            if not new_password or len(new_password) < 8:
+                flash('Password must be at least 8 characters long.', 'error')
+                return render_template('reset_password.html', email=mask_email(reset_email), user=user, is_verified=True)
+
+            if new_password != confirm_password:
+                flash('New password and confirmation password do not match.', 'error')
+                return render_template('reset_password.html', email=mask_email(reset_email), user=user, is_verified=True)
+
+            hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            execute_db('UPDATE users SET password_hash = %s WHERE id = %s', (hashed, user['id']))
+
+            session.pop('reset_otp', None)
+            session.pop('reset_otp_expires', None)
+            session.pop('reset_user_id', None)
+            session.pop('reset_email', None)
+            session.pop('reset_fullname', None)
+            session.pop('reset_otp_verified', None)
+
+            log_audit('password_reset_completed', 'user', user['id'])
+            flash('Password successfully reset! You can now sign in with your new password.', 'success')
+            return redirect(url_for('auth.login'))
+
+    return render_template('reset_password.html', email=mask_email(reset_email), user=user, is_verified=is_verified)
+
+
+@auth_bp.route('/resend-reset-otp', methods=['POST'])
+def resend_reset_otp():
+    reset_user_id = session.get('reset_user_id')
+    reset_email = session.get('reset_email')
+    reset_fullname = session.get('reset_fullname')
+
+    if not reset_user_id or not reset_email:
+        flash('Password reset session expired. Please try again.', 'error')
+        return redirect(url_for('auth.forgot_password'))
+
+    otp_code = str(secrets.randbelow(900000) + 100000)
+    session['reset_otp'] = otp_code
+    session['reset_otp_expires'] = time.time() + 600
+    session['reset_otp_verified'] = False
+
+    send_password_reset_email(reset_email, reset_fullname, otp_code)
+    flash(f'A fresh 6-digit reset code has been sent to {mask_email(reset_email)}.', 'info')
+    return redirect(url_for('auth.reset_password'))

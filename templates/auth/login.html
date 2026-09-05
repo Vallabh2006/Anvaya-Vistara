@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}Sign In - {{ _('app.name') }}{% endblock %}
+
+{% block body %}
+<div style="display:flex; min-height:100vh; background: var(--bg);">
+
+    <div class="auth-hero-pane" style="flex:1; background: linear-gradient(135deg, var(--navy) 0%, var(--blue) 100%); display:flex; align-items:center; justify-content:center; flex-direction:column; color:var(--white); padding: var(--sp-8);">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <h1 style="color:var(--white); margin-top: var(--sp-4); font-size: var(--fs-2xl); text-align: center;">{{ _('app.name') }}</h1>
+        <p style="opacity:0.85; margin-top: var(--sp-2); text-align:center; max-width:380px; font-size: var(--fs-sm); line-height: 1.6;">
+            Universal Rural Healthcare Platform connecting patients, primary health centres, clinical specialists, and regional health administration.
+        </p>
+
+        <div style="margin-top: var(--sp-8); background: rgba(255,255,255,0.1); border-radius: var(--radius-lg); padding: var(--sp-5); max-width: 380px; border: 1px solid rgba(255,255,255,0.15); width: 100%;">
+            <div style="display: flex; gap: var(--sp-3); margin-bottom: var(--sp-3); align-items: center;">
+                <span style="font-size: var(--fs-sm);">Unified EHR & Diagnostic Lab Records</span>
+            </div>
+            <div style="display: flex; gap: var(--sp-3); margin-bottom: var(--sp-3); align-items: center;">
+                <span style="font-size: var(--fs-sm);">Connected PHC & Sub-Center Teleconsultations</span>
+            </div>
+            <div style="display: flex; gap: var(--sp-3); margin-bottom: var(--sp-3); align-items: center;">
+                <span style="font-size: var(--fs-sm);">Instant 108 Emergency Ambulance Dispatch</span>
+            </div>
+        </div>
+    </div>
+
+    <div style="flex:1.2; display:flex; align-items:center; justify-content:center; padding: var(--sp-6) var(--sp-4); overflow-y: auto;">
+        <div style="width:100%; max-width:520px; background: var(--white); padding: var(--sp-8); border-radius: var(--radius-lg); border: 1px solid var(--line); box-shadow: var(--shadow-sm); margin: var(--sp-4) 0;">
+            
+            <div style="margin-bottom: var(--sp-5);">
+                <div style="display: inline-block; background: var(--sky); color: var(--navy); padding: 4px 10px; border-radius: 6px; font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">
+                    Authentication Portal
+                </div>
+                <h2 style="margin: 0 0 6px; color: var(--navy); font-size: 1.5rem; font-weight: 700;">Sign In to Account</h2>
+                <p style="margin: 0; color: var(--muted); font-size: var(--fs-sm);">Access your patient records, staff workspace, or management panel</p>
+            </div>
+
+            <div style="display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px; margin-bottom: var(--sp-5);">
+                <button type="button" id="tab-btn-username" onclick="switchLoginTab('username')"
+                        style="flex: 1; padding: 9px 12px; border: none; border-radius: 6px; font-size: var(--fs-xs); font-weight: 700; cursor: pointer; transition: all 0.2s; background: {% if active_tab != 'email' %}var(--white){% else %}transparent{% endif %}; color: {% if active_tab != 'email' %}var(--navy){% else %}var(--muted){% endif %}; box-shadow: {% if active_tab != 'email' %}0 1px 3px rgba(0,0,0,0.1){% else %}none{% endif %};">
+                    Username & Password
+                </button>
+                <button type="button" id="tab-btn-email" onclick="switchLoginTab('email')"
+                        style="flex: 1; padding: 9px 12px; border: none; border-radius: 6px; font-size: var(--fs-xs); font-weight: 700; cursor: pointer; transition: all 0.2s; background: {% if active_tab == 'email' %}var(--white){% else %}transparent{% endif %}; color: {% if active_tab == 'email' %}var(--navy){% else %}var(--muted){% endif %}; box-shadow: {% if active_tab == 'email' %}0 1px 3px rgba(0,0,0,0.1){% else %}none{% endif %};">
+                    Email & OTP Code
+                </button>
+            </div>
+
+            <form method="POST" id="username-login-form" style="display: {% if active_tab != 'email' %}flex{% else %}none{% endif %}; flex-direction: column; gap: var(--sp-4);">
+                <input type="hidden" name="login_type" value="username">
+                
+                <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
+                    <label for="username" style="font-size: var(--fs-sm); font-weight: 600; color: var(--navy);">
+                        Username <span style="color: var(--red);">*</span>
+                    </label>
+                    <input type="text" id="username" name="username" required autocomplete="username" value="{{ form_data.get('username', '') }}" placeholder="e.g. admin, dr_priya, or username"
+                           style="width: 100%; height: 42px; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm); background: var(--white); outline: none; box-sizing: border-box;">
+                </div>
+
+                <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label for="password" style="font-size: var(--fs-sm); font-weight: 600; color: var(--navy);">
+                            Password <span style="color: var(--red);">*</span>
+                        </label>
+                        <a href="{{ url_for('auth.forgot_password') }}" style="font-size: var(--fs-xs); color: var(--blue); font-weight: 600; text-decoration: none;">
+                            Forgot Password?
+                        </a>
+                    </div>
+                    <input type="password" id="password" name="password" required autocomplete="current-password" placeholder="Enter your account password"
+                           style="width: 100%; height: 42px; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm); background: var(--white); outline: none; box-sizing: border-box;">
+                </div>
+
+                <button type="submit" class="btn lg" style="width:100%; margin-top: var(--sp-2); background: var(--blue); color: #fff; height: 46px; border-radius: var(--radius); font-weight: 600; font-size: var(--fs-base); border: none; cursor: pointer;">
+                    Sign In with Password
+                </button>
+            </form>
+
+            <form method="POST" id="email-login-form" style="display: {% if active_tab == 'email' %}flex{% else %}none{% endif %}; flex-direction: column; gap: var(--sp-4);">
+                <input type="hidden" name="login_type" value="email">
+                
+                <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
+                    <label for="email" style="font-size: var(--fs-sm); font-weight: 600; color: var(--navy);">
+                        Registered Email Address <span style="color: var(--red);">*</span>
+                    </label>
+                    <input type="email" id="email" name="email" autocomplete="email" value="{{ form_data.get('email', '') }}" placeholder="e.g. name@example.com"
+                           style="width: 100%; height: 42px; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm); background: var(--white); outline: none; box-sizing: border-box;">
+                </div>
+
+                <div style="background: var(--sky); border-radius: var(--radius); padding: 10px 14px; font-size: var(--fs-xs); color: var(--navy); line-height: 1.5;">
+                    A secure 6-digit one-time verification code will be dispatched to your registered email address to authorize access.
+                </div>
+
+                <div style="text-align: right; margin-top: -4px;">
+                    <a href="{{ url_for('auth.forgot_password') }}" style="font-size: var(--fs-xs); color: var(--blue); font-weight: 600; text-decoration: none;">
+                        Forgot password?
+                    </a>
+                </div>
+
+                <button type="submit" class="btn lg" style="width:100%; margin-top: var(--sp-2); background: var(--blue); color: #fff; height: 46px; border-radius: var(--radius); font-weight: 600; font-size: var(--fs-base); border: none; cursor: pointer;">
+                    Send Verification Code & Sign In
+                </button>
+            </form>
+
+            <p style="text-align:center; margin-top: var(--sp-6); color: var(--muted); font-size: var(--fs-sm);">
+                Don't have a patient account yet? <a href="{{ url_for('auth.signup') }}" style="font-weight: 600; color: var(--blue); text-decoration: none;">Register Here</a>
+            </p>
+        </div>
+    </div>
+</div>
+
+<style>
+@media (max-width: 768px) {
+    .auth-hero-pane { display: none !important; }
+}
+</style>
+
+<script>
+function switchLoginTab(tab) {
+    const usernameForm = document.getElementById('username-login-form');
+    const emailForm = document.getElementById('email-login-form');
+    const btnUsername = document.getElementById('tab-btn-username');
+    const btnEmail = document.getElementById('tab-btn-email');
+    const userInput = document.getElementById('username');
+    const passInput = document.getElementById('password');
+    const emailInput = document.getElementById('email');
+    
+    if (tab === 'email') {
+        usernameForm.style.display = 'none';
+        emailForm.style.display = 'flex';
+        btnEmail.style.background = 'var(--white)';
+        btnEmail.style.color = 'var(--navy)';
+        btnEmail.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+        btnUsername.style.background = 'transparent';
+        btnUsername.style.color = 'var(--muted)';
+        btnUsername.style.boxShadow = 'none';
+        userInput.removeAttribute('required');
+        passInput.removeAttribute('required');
+        emailInput.setAttribute('required', 'required');
+        emailInput.focus();
+    } else {
+        emailForm.style.display = 'none';
+        usernameForm.style.display = 'flex';
+        btnUsername.style.background = 'var(--white)';
+        btnUsername.style.color = 'var(--navy)';
+        btnUsername.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+        btnEmail.style.background = 'transparent';
+        btnEmail.style.color = 'var(--muted)';
+        btnEmail.style.boxShadow = 'none';
+        emailInput.removeAttribute('required');
+        userInput.setAttribute('required', 'required');
+        passInput.setAttribute('required', 'required');
+        userInput.focus();
+    }
+}
+</script>
+{% endblock %}

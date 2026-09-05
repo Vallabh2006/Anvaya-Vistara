@@ -1,0 +1,55 @@
+{% extends "shell.html" %}
+{% block page_title %}Teleconsultations - Coming Soon{% endblock %}
+{% block sidebar_nav %}{% include "patient/_nav.html" %}{% endblock %}
+
+{% block content %}
+<div style="max-width: 860px; margin: 0 auto; padding: var(--sp-6) 0;">
+
+    <div class="card" style="background: linear-gradient(135deg, var(--navy) 0%, #0369a1 100%); color: #fff; border-radius: 16px; padding: var(--sp-8); text-align: center; margin-bottom: var(--sp-6); box-shadow: 0 10px 30px rgba(3, 105, 161, 0.15);">
+        <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 16px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; margin-bottom: var(--sp-4);">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 7l-7 5 7 5V7z"></path>
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+            </svg>
+        </div>
+
+        <div style="display: inline-block; background: rgba(56, 189, 248, 0.2); color: #38bdf8; padding: 4px 14px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;">
+            Feature In Development &bull; Coming Soon
+        </div>
+
+        <h1 style="color: #fff; font-size: 2.2rem; font-weight: 800; margin: 0 0 12px; letter-spacing: -0.5px;">
+            Virtual Teleconsultations
+        </h1>
+
+        <p style="color: #94a3b8; font-size: 1.05rem; max-width: 580px; margin: 0 auto var(--sp-6); line-height: 1.6;">
+            Virtual video appointments and remote second opinions with verified healthcare specialists will be available soon.
+        </p>
+
+        <div style="display: flex; gap: var(--sp-3); justify-content: center; flex-wrap: wrap;">
+            <a href="/patient/appointments/@{{ profile_username or (current_user.username if current_user else '') }}" class="btn" style="background: #38bdf8; color: #082f49; font-weight: 700; padding: 10px 22px; border-radius: 8px;">
+                View Appointments & Live Queue
+            </a>
+            <a href="/patient/records/@{{ profile_username or (current_user.username if current_user else '') }}" class="btn" style="background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); font-weight: 600; padding: 10px 22px; border-radius: 8px;">
+                View Medical Records
+            </a>
+        </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sp-4);">
+        <div class="card" style="padding: var(--sp-5); background: var(--white); border-radius: 12px; border: 1px solid var(--line);">
+            <h3 style="margin: 0 0 6px; font-size: 1rem; color: var(--navy);">Remote Specialist Visits</h3>
+            <p style="margin: 0; font-size: var(--fs-xs); color: var(--muted); line-height: 1.5;">
+                Consult with verified doctors and specialist physicians from the comfort of your home or local health subcentre.
+            </p>
+        </div>
+
+        <div class="card" style="padding: var(--sp-5); background: var(--white); border-radius: 12px; border: 1px solid var(--line);">
+            <h3 style="margin: 0 0 6px; font-size: 1rem; color: var(--navy);">Digital Prescriptions</h3>
+            <p style="margin: 0; font-size: var(--fs-xs); color: var(--muted); line-height: 1.5;">
+                Receive instant electronic prescriptions directly in your patient portal following your virtual consultation.
+            </p>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

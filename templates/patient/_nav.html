@@ -1,0 +1,35 @@
+<li class="sidebar-section-title">Patient Portal</li>
+<a href="/patient/@{{ current_user.username if current_user else '' }}"
+    class="navitem {% if request.path == '/patient/@' + (current_user.username if current_user else '') or request.path == '/patient/dashboard' or request.path == '/dashboard/patient' %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.dashboard') }}</span>
+</a>
+<a href="/patient/appointments/@{{ current_user.username if current_user else '' }}"
+    class="navitem {% if request.path.startswith('/patient/appointments') or request.path.startswith('/appointments') %}active{% endif %}">
+    <span class="nav-label">Appointments & Queue</span>
+</a>
+<a href="/patient/records/@{{ current_user.username if current_user else '' }}"
+    class="navitem {% if request.path.startswith('/patient/records') or request.path.startswith('/records') or request.path.startswith('/patient/medical-records') %}active{% endif %}">
+    <span class="nav-label">{{ _('patient.records') }}</span>
+</a>
+<a href="/patient/teleconsult/@{{ current_user.username if current_user else '' }}"
+    class="navitem {% if request.path.startswith('/patient/teleconsult') %}active{% endif %}">
+    <span class="nav-label">Teleconsultations <span style="font-size: 9px; text-transform: uppercase; background: rgba(56,189,248,0.15); color: #0284c7; padding: 2px 6px; border-radius: 4px; font-weight: 700; margin-left: 4px;">Soon</span></span>
+</a>
+<a href="/patient/map/@{{ current_user.username if current_user else '' }}"
+    class="navitem {% if request.path.startswith('/patient/map') or request.path.startswith('/map') %}active{% endif %}">
+    <span class="nav-label">Healthcare Map</span>
+</a>
+<a href="/patient/emergency/@{{ current_user.username if current_user else '' }}"
+    class="navitem {% if request.path.startswith('/patient/emergency') or request.path.startswith('/emergency') %}active{% endif %}">
+    <span class="nav-label">Emergency Contact</span>
+</a>
+
+<li class="sidebar-section-title">Shared</li>
+<a href="/patient/notifications/@{{ current_user.username if current_user else '' }}"
+    class="navitem {% if request.path.startswith('/patient/notifications') or request.path.startswith('/notifications') %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.notifications') }}</span>
+</a>
+<a href="/settings/@{{ current_user.username if current_user else '' }}"
+    class="navitem {% if request.path.startswith('/settings') %}active{% endif %}">
+    <span class="nav-label">Account Settings</span>
+</a>

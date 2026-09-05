@@ -1,0 +1,188 @@
+
+
+
+const api = {
+  async request(url, options = {}) {
+    const defaults = {
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+    };
+    const config = { ...defaults, ...options };
+    if (config.body && typeof config.body === 'object' && !(config.body instanceof FormData)) {
+      config.body = JSON.stringify(config.body);
+    }
+    if (config.body instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
+    try {
+      const res = await fetch(url, config);
+      if (res.status === 401) {
+        window.location.href = '/login';
+        return null;
+      }
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const msg = data?.error || `Request failed (${res.status})`;
+        showToast(msg, 'error');
+        return { ok: false, status: res.status, error: msg, data };
+      }
+      return { ok: true, status: res.status, data };
+    } catch (err) {
+      showToast('Network error. Please check your connection.', 'error');
+      return { ok: false, error: err.message };
+    }
+  },
+  get: (url) => api.request(url),
+  post: (url, body) => api.request(url, { method: 'POST', body }),
+  put: (url, body) => api.request(url, { method: 'PUT', body }),
+  delete: (url) => api.request(url, { method: 'DELETE' }),
+};
+
+
+function showToast(message, type = 'info', duration = 4000) {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  const icons = { info: '', success: '', warning: '', error: '' };
+  toast.innerHTML = `<span>${icons[type] || ''}</span><span>${message}</span>`;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add('removing');
+    toast.addEventListener('animationend', () => toast.remove());
+  }, duration);
+}
+
+
+function openModal(modalId) {
+  const modal = document.getElementById(modalId);
+  if (modal) {
+    modal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function closeModal(modalId) {
+  const modal = document.getElementById(modalId);
+  if (modal) {
+    modal.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+}
+
+
+document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal') && e.target.classList.contains('open')) {
+    e.target.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+});
+
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const openModals = document.querySelectorAll('.modal.open');
+    openModals.forEach((m) => {
+      m.classList.remove('open');
+      document.body.style.overflow = '';
+    });
+  }
+});
+
+
+function initOfflineDetection() {
+  const banner = document.querySelector('.offline');
+  if (!banner) return;
+
+  function updateStatus() {
+    if (navigator.onLine) {
+      banner.classList.remove('show');
+    } else {
+      banner.classList.add('show');
+    }
+  }
+
+  window.addEventListener('online', () => {
+    updateStatus();
+    showToast('Back online! Syncing data...', 'success');
+  });
+  window.addEventListener('offline', () => {
+    updateStatus();
+    showToast('You are offline. Changes will sync later.', 'warning');
+  });
+
+  updateStatus();
+}
+
+
+let notifInterval = null;
+
+function initNotifications() {
+  const bell = document.querySelector('.notif-bell');
+  if (!bell) return;
+
+  async function pollNotifications() {
+    const res = await api.get('/api/notifications?unread=1');
+    if (res?.ok && res.data) {
+      const count = res.data.count || 0;
+      const badge = bell.querySelector('.badge');
+      if (count > 0) {
+        if (badge) {
+          badge.textContent = count > 9 ? '9+' : count;
+          badge.style.display = 'flex';
+        }
+      } else if (badge) {
+        badge.style.display = 'none';
+      }
+    }
+  }
+
+  pollNotifications();
+  notifInterval = setInterval(pollNotifications, 30000);
+}
+
+
+function toggleSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar) sidebar.classList.toggle('open');
+}
+
+
+function confirmAction(message) {
+  return window.confirm(message);
+}
+
+
+function validateForm(formEl) {
+  let valid = true;
+  const fields = formEl.querySelectorAll('[required]');
+  fields.forEach((field) => {
+    const err = field.closest('.field')?.querySelector('.error-text');
+    if (!field.value.trim()) {
+      field.classList.add('error');
+      if (err) err.textContent = 'This field is required';
+      valid = false;
+    } else {
+      field.classList.remove('error');
+      if (err) err.textContent = '';
+    }
+  });
+  return valid;
+}
+
+
+document.addEventListener('DOMContentLoaded', () => {
+  initOfflineDetection();
+  initNotifications();
+  const toggleBtn = document.getElementById('sidebar-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', toggleSidebar);
+  }
+});

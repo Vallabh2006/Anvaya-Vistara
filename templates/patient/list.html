@@ -1,0 +1,56 @@
+{% extends "shell.html" %}
+{% block page_title %}{{ _('nav.patients') }}{% endblock %}
+{% block sidebar_nav %}
+{% if current_user.role == 'asha' %}{% include "asha/_nav.html" %}
+{% elif current_user.role in ('doctor', 'nurse', 'helper', 'ambulance_op', 'care_taker', 'therapist', 'pharmacist', 'lab_technician', 'receptionist') %}{% include "phc/_nav.html" %}
+{% elif current_user.role == 'region_admin' %}{% include "region/_nav.html" %}
+{% elif current_user.role == 'system_admin' %}{% include "admin/_nav.html" %}
+{% endif %}
+{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ _('nav.patients') }}</h1>
+    <a href="#" class="btn" onclick="openModal('add-patient-modal')">+ {{ _('patient.new') }}</a>
+</div>
+<div class="panel">
+    {% if patients %}
+    <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr>
+                <th style="text-align: left; padding: var(--sp-2); border-bottom: 1px solid var(--line);">ID</th>
+                <th style="text-align: left; padding: var(--sp-2); border-bottom: 1px solid var(--line);">Full Name</th>
+                <th style="text-align: left; padding: var(--sp-2); border-bottom: 1px solid var(--line);">Gender</th>
+                <th style="text-align: left; padding: var(--sp-2); border-bottom: 1px solid var(--line);">Age</th>
+                <th style="text-align: left; padding: var(--sp-2); border-bottom: 1px solid var(--line);">Facility</th>
+                <th style="text-align: left; padding: var(--sp-2); border-bottom: 1px solid var(--line);">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for pat in patients %}
+            <tr>
+                <td
+                    style="padding: var(--sp-2); border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: var(--fs-sm);">
+                    {{ pat.id }}</td>
+                <td style="padding: var(--sp-2); border-bottom: 1px solid var(--line); font-weight: 600;">{{
+                    pat.full_name }}</td>
+                <td style="padding: var(--sp-2); border-bottom: 1px solid var(--line);">{{ pat.gender }}</td>
+                <td style="padding: var(--sp-2); border-bottom: 1px solid var(--line);">{{ pat.dob | age }}</td>
+                <td style="padding: var(--sp-2); border-bottom: 1px solid var(--line);">{{ pat.facility_id }}</td>
+                <td style="padding: var(--sp-2); border-bottom: 1px solid var(--line);">
+                    <a href="/patient/{{ pat.id }}" class="btn sm outline" style="margin-right: 4px;">
+                        View Details
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+
+        <h3>No Patients Found</h3>
+        <p>There are no registered patients in the database yet.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

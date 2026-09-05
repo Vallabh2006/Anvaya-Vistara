@@ -1,0 +1,30 @@
+<li class="sidebar-section-title">PHC Clinical Operations</li>
+<a href="/phc/@{{ current_user.username if current_user else '' }}" class="navitem {% if request.path.startswith('/phc/@') or request.path == '/phc/dashboard' or request.path == '/phc/' or request.path == '/dashboard/phc' or request.path == '/dashboard/doctor' or request.path == '/dashboard/staff' %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.dashboard') }}</span>
+</a>
+<a href="/phc/appointments" class="navitem {% if request.path == '/phc/appointments' or request.path == '/phc/queue' %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.appointments') }}</span>
+</a>
+<a href="/phc/teleconsult" class="navitem {% if request.path == '/phc/contact' or request.path == '/phc/teleconsult' %}active{% endif %}">
+    <span class="nav-label">Teleconsultation <span style="font-size: 9px; text-transform: uppercase; background: rgba(56,189,248,0.15); color: #0284c7; padding: 2px 6px; border-radius: 4px; font-weight: 700; margin-left: 4px;">Soon</span></span>
+</a>
+<a href="/phc/inventory" class="navitem {% if request.path == '/phc/inventory' %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.inventory') }}</span>
+</a>
+<a href="/phc/referrals" class="navitem {% if request.path == '/phc/referrals' %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.referrals') }}</span>
+</a>
+
+<li class="sidebar-section-title">Shared Services</li>
+<a href="/patient/" class="navitem {% if request.path.startswith('/patient') %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.patients') }}</span>
+</a>
+<a href="/facilities" class="navitem {% if request.path.startswith('/facilities') %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.facilities') }}</span>
+</a>
+<a href="/notifications/@{{ current_user.username if current_user else '' }}" class="navitem {% if request.path.startswith('/notifications') %}active{% endif %}">
+    <span class="nav-label">{{ _('nav.notifications') }}</span>
+</a>
+<a href="/settings/@{{ current_user.username if current_user else '' }}" class="navitem {% if request.path.startswith('/settings') %}active{% endif %}">
+    <span class="nav-label">Account Settings</span>
+</a>

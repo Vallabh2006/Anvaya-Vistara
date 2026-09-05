@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}403 - Access Denied{% endblock %}
+{% block body %}
+<div style="display:flex; align-items:center; justify-content:center; min-height:100vh; flex-direction:column; text-align:center; padding: var(--sp-8);">
+    <h1 style="font-size: 4rem; color: var(--amber); margin-bottom: var(--sp-4);">403</h1>
+    <h2 style="margin-bottom: var(--sp-4);">Access Denied</h2>
+    <p style="color: var(--muted); margin-bottom: var(--sp-6);">You don't have permission to access this resource.</p>
+    <a href="/" class="btn">Go Home</a>
+</div>
+{% endblock %}
