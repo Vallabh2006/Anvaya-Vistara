@@ -12,10 +12,12 @@
             Coordinate emergency ambulance transfers, specialist secondary care, and hospital counter-referrals across regional centers.
         </p>
     </div>
+    {% if can('manage_referrals') %}
     <button type="button" class="btn" onclick="openCreateReferralModal()"
             style="background: var(--blue); color: #fff; border: none; padding: 10px 20px; border-radius: var(--radius); font-weight: 700; font-size: var(--fs-sm); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; box-shadow: var(--shadow-sm);">
         + Initiate New Referral
     </button>
+    {% endif %}
 </div>
 
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-4); margin-bottom: var(--sp-6);">
@@ -184,9 +186,11 @@
                     </td>
 
                     <td style="padding: 14px 16px; text-align: right; white-space: nowrap;">
+                        {% if can('manage_referrals') %}
                         <div style="display: flex; gap: 6px; justify-content: flex-end; align-items: center;">
                             {% if r.status in ['initiated', 'accepted', 'in_transit'] %}
                             <form method="POST" action="/phc/referrals/{{ r.id }}/enqueue" style="display: inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="btn sm" style="background: var(--teal); color: #fff; border: none; padding: 6px 12px; border-radius: var(--radius); font-weight: 700; font-size: var(--fs-xs); cursor: pointer;" title="Directly assign Priority OPD Queue token at destination facility">
                                     Enqueue in OPD
                                 </button>
@@ -198,6 +202,9 @@
                                 Manage Transfer
                             </button>
                         </div>
+                        {% else %}
+                        <span style="color: var(--muted); font-size: 11px;">View Only</span>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -223,6 +230,7 @@
             </div>
 
             <form method="POST" action="/phc/referrals/create" style="display: flex; flex-direction: column; gap: var(--sp-4);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
                     <label for="ref_patient_id" style="font-size: var(--fs-sm); font-weight: 600; color: var(--navy);">
                         Select Patient <span style="color: var(--red);">*</span>
@@ -311,6 +319,7 @@
             </div>
 
             <form method="POST" id="update-status-form" action="" style="display: flex; flex-direction: column; gap: var(--sp-4);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div style="background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; font-size: var(--fs-xs); color: var(--navy);">
                     <div><strong>Patient:</strong> <span id="modal-patient-name">--</span></div>
                     <div style="margin-top: 2px;"><strong>Destination:</strong> <span id="modal-dest-center">--</span></div>

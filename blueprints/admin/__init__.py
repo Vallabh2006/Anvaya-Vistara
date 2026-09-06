@@ -9,6 +9,8 @@ from utils.db import query_db, execute_db
 from utils.audit import log_audit
 from utils.email_helper import send_staff_invite_email
 from utils.id_generator import generate_staff_id, generate_facility_id
+from utils.sanitize import validate_username
+from app import limiter
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin', template_folder='../../templates/admin')
 
@@ -21,6 +23,8 @@ ROLE_DISPLAY_MAP = {
     'ambulance_op': '108 Ambulance Operator / Driver',
     'receptionist': 'Registration & Front Desk',
     'care_taker': 'Care Taker / ASHA Worker',
+    'helper': 'Healthcare Helper / Multi-Purpose Worker',
+    'therapist': 'Physiotherapist / Specialist Therapist',
     'region_admin': 'Facility / Regional Admin',
     'system_admin': 'Master System Administrator'
 }
@@ -223,6 +227,9 @@ def staff_register():
 
     if custom_username:
         username = custom_username.lower().replace(' ', '_')
+        if not validate_username(username):
+            flash('Username must be 3-30 characters long and can only contain lowercase letters, numbers, dots (.), and underscores (_).', 'error')
+            return redirect(url_for('admin.staff'))
         if query_db('SELECT id FROM users WHERE username = %s', (username,), one=True):
             flash(f'Username @{username} is already taken. Please choose another.', 'error')
             return redirect(url_for('admin.staff'))
@@ -272,7 +279,7 @@ def staff_register():
     if email_sent:
         flash(f'Staff account for {full_name} (@{username}) created! Invitation email sent to {email}.', 'success')
     else:
-        flash(f'Staff account created (@{username}, Temp Pass: {temp_password}). Email dispatch was logged.', 'info')
+        flash(f'Staff account created (@{username}). Email delivery could not be completed at this time.', 'info')
 
     return redirect(url_for('admin.staff'))
 
@@ -467,7 +474,7 @@ def create_facility():
     address = request.form.get('address', '').strip()
     lat = request.form.get('lat', '').strip() or '22.5530000'
     lng = request.form.get('lng', '').strip() or '72.9300000'
-    phone = request.form.get('phone', '').strip() or '+91 2692 230000'
+    phone = request.form.get('phone', '').strip() or None
     
     beds = int(request.form.get('beds', 10) or 10)
     ambulance = int(request.form.get('ambulance', 1) or 1)
@@ -500,7 +507,10 @@ def create_facility():
             execute_db('UPDATE users SET center_id = %s WHERE id = %s', (fac_id, existing_admin_id))
     else:
         admin_fullname = request.form.get('admin_fullname', '').strip() or f'{name} Admin'
-        admin_username = request.form.get('admin_username', '').strip()
+        admin_username = request.form.get('admin_username', '').strip().lower()
+        if admin_username and not validate_username(admin_username):
+            flash('Facility admin username must be 3-30 characters long and can only contain lowercase letters, numbers, dots (.), and underscores (_).', 'error')
+            return redirect(url_for('admin.facilities'))
         admin_email = request.form.get('admin_email', '').strip()
         admin_phone = request.form.get('admin_phone', '').strip() or phone
         admin_password = request.form.get('admin_password', '').strip() or 'adminpassword'
@@ -658,6 +668,7 @@ def export_inventory_csv():
 
 
 @admin_bp.route('/inventory/import', methods=['POST'])
+@limiter.limit("5 per hour")
 @role_required('system_admin', 'region_admin')
 def import_inventory_csv():
     if 'file' not in request.files:
@@ -667,6 +678,10 @@ def import_inventory_csv():
     file = request.files['file']
     if not file.filename.endswith('.csv'):
         flash('Please upload a valid CSV file.', 'error')
+        return redirect(url_for('admin.inventory'))
+
+    if request.content_length and request.content_length > 5 * 1024 * 1024:
+        flash('Uploaded file exceeds 5MB limit.', 'error')
         return redirect(url_for('admin.inventory'))
         
     center_id_default = request.form.get('center_id', '').strip()
@@ -1192,9 +1207,12 @@ def reset_user_password(user_id):
         return redirect(url_for('admin.permissions'))
 
     hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    execute_db('UPDATE users SET password_hash = %s, updated_at = NOW() WHERE id = %s', (hashed, user_id))
+    new_version = (target_user.get('session_version') or 1) + 1
+    execute_db('UPDATE users SET password_hash = %s, session_version = %s, failed_login_count = 0, locked_until = NULL, updated_at = NOW() WHERE id = %s', (hashed, new_version, user_id))
 
-    log_audit('password_reset_by_master_admin', 'user', user_id)
+    current_admin = get_current_user()
+    admin_name = current_admin.get('username') if current_admin else 'admin'
+    log_audit('password_reset_by_master_admin', 'user', user_id, f'Admin @{admin_name} reset password for @{target_user["username"]}')
     flash(f'Password for @{target_user["username"]} has been successfully reset.', 'success')
     return redirect(url_for('admin.permissions'))
 

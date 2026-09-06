@@ -1,6 +1,3 @@
-
-
-
 const api = {
   async request(url, options = {}) {
     const defaults = {
@@ -38,7 +35,6 @@ const api = {
   delete: (url) => api.request(url, { method: 'DELETE' }),
 };
 
-
 function showToast(message, type = 'info', duration = 4000) {
   let container = document.getElementById('toast-container');
   if (!container) {
@@ -60,7 +56,6 @@ function showToast(message, type = 'info', duration = 4000) {
   }, duration);
 }
 
-
 function openModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
@@ -77,14 +72,12 @@ function closeModal(modalId) {
   }
 }
 
-
 document.addEventListener('click', (e) => {
   if (e.target.classList.contains('modal') && e.target.classList.contains('open')) {
     e.target.classList.remove('open');
     document.body.style.overflow = '';
   }
 });
-
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
@@ -93,9 +86,9 @@ document.addEventListener('keydown', (e) => {
       m.classList.remove('open');
       document.body.style.overflow = '';
     });
+    toggleSidebar(false);
   }
 });
-
 
 function initOfflineDetection() {
   const banner = document.querySelector('.offline');
@@ -120,7 +113,6 @@ function initOfflineDetection() {
 
   updateStatus();
 }
-
 
 let notifInterval = null;
 
@@ -148,17 +140,40 @@ function initNotifications() {
   notifInterval = setInterval(pollNotifications, 30000);
 }
 
+function toggleSidebar(forceState) {
+  const sidebar = document.getElementById('sidebar') || document.querySelector('.sidebar');
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (!sidebar) return;
 
-function toggleSidebar() {
-  const sidebar = document.querySelector('.sidebar');
-  if (sidebar) sidebar.classList.toggle('open');
+  const isOpen = forceState !== undefined ? forceState : !sidebar.classList.contains('open');
+  if (isOpen) {
+    sidebar.classList.add('open');
+    if (backdrop) backdrop.classList.add('show');
+    if (window.innerWidth <= 768) {
+      document.body.style.overflow = 'hidden';
+    }
+  } else {
+    sidebar.classList.remove('open');
+    if (backdrop) backdrop.classList.remove('show');
+    document.body.style.overflow = '';
+  }
 }
 
+function switchLanguage(lang) {
+  fetch('/api/auth/set-lang', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lang: lang })
+  }).then(() => {
+    window.location.reload();
+  }).catch(() => {
+    window.location.reload();
+  });
+}
 
 function confirmAction(message) {
   return window.confirm(message);
 }
-
 
 function validateForm(formEl) {
   let valid = true;
@@ -177,12 +192,31 @@ function validateForm(formEl) {
   return valid;
 }
 
-
 document.addEventListener('DOMContentLoaded', () => {
   initOfflineDetection();
   initNotifications();
-  const toggleBtn = document.getElementById('sidebar-toggle');
+
+  const toggleBtn = document.getElementById('sidebar-toggle') || document.getElementById('mobileNavToggle');
   if (toggleBtn) {
-    toggleBtn.addEventListener('click', toggleSidebar);
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSidebar();
+    });
   }
+
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (backdrop) {
+    backdrop.addEventListener('click', () => {
+      toggleSidebar(false);
+    });
+  }
+
+  const navItems = document.querySelectorAll('.sidebar .navitem');
+  navItems.forEach((item) => {
+    item.addEventListener('click', () => {
+      if (window.innerWidth <= 768) {
+        toggleSidebar(false);
+      }
+    });
+  });
 });

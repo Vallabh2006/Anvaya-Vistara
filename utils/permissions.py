@@ -104,6 +104,8 @@ ALL_ROLES = [
     ('ambulance_op', '108 Ambulance Operator / Driver', '#ea580c'),
     ('receptionist', 'Registration & Front Desk', '#475569'),
     ('care_taker', 'Care Taker / ASHA Worker', '#059669'),
+    ('helper', 'Healthcare Helper / Multi-Purpose Worker', '#0d9488'),
+    ('therapist', 'Physiotherapist / Specialist Therapist', '#4f46e5'),
     ('region_admin', 'Facility / Regional Admin', '#b45309'),
     ('system_admin', 'Master System Administrator', '#dc2626')
 ]
@@ -246,6 +248,40 @@ DEFAULT_ROLE_PERMISSIONS = {
         'view_analytics': 0,
         'manage_permissions': 0
     },
+    'helper': {
+        'view_records': 1,
+        'create_consultation': 0,
+        'manage_prescriptions': 0,
+        'view_inventory': 1,
+        'manage_inventory': 0,
+        'view_appointments': 1,
+        'manage_appointments': 0,
+        'teleconsult': 0,
+        'manage_referrals': 0,
+        'register_patient': 1,
+        'manage_staff': 0,
+        'manage_facilities': 0,
+        'view_audit_logs': 0,
+        'view_analytics': 0,
+        'manage_permissions': 0
+    },
+    'therapist': {
+        'view_records': 1,
+        'create_consultation': 1,
+        'manage_prescriptions': 0,
+        'view_inventory': 1,
+        'manage_inventory': 0,
+        'view_appointments': 1,
+        'manage_appointments': 1,
+        'teleconsult': 1,
+        'manage_referrals': 1,
+        'register_patient': 0,
+        'manage_staff': 0,
+        'manage_facilities': 0,
+        'view_audit_logs': 0,
+        'view_analytics': 0,
+        'manage_permissions': 0
+    },
     'patient': {
         'view_records': 1,
         'create_consultation': 0,
@@ -306,7 +342,10 @@ def has_permission(action, user=None):
         user = get_current_user()
     if not user:
         return False
-    role = user.get('role')
+    if isinstance(user, str):
+        role = user
+    else:
+        role = user.get('role')
     if role == 'system_admin':
         return True
     

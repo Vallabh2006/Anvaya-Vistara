@@ -50,6 +50,7 @@
 </div>
 
 <form method="POST" action="/admin/permissions/save-matrix" class="panel" style="margin-bottom: var(--sp-6); padding: var(--sp-6);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-4); flex-wrap: wrap; gap: var(--sp-3); border-bottom: 1px solid var(--line); padding-bottom: var(--sp-4);">
         <div>
             <h3 style="margin: 0 0 4px; color: var(--navy); font-size: var(--fs-md); font-weight: 700;">
@@ -226,7 +227,7 @@
 </div>
 
 <div id="perm-modal" class="modal">
-    <div class="modal-dialog" style="max-width: 520px;">
+    <div class="modal-dialog" style="background: var(--white); border-radius: var(--radius-xl); max-width: 520px; width: 100%; box-shadow: var(--shadow-xl); border: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column;">
         <div style="padding: var(--sp-4) var(--sp-6); background: var(--bg); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center;">
             <div>
                 <h3 style="margin: 0; color: var(--navy); font-size: var(--fs-md); font-weight: 700;">Modify Account Role & Center</h3>
@@ -235,7 +236,8 @@
             <button type="button" onclick="closeEditPermissionModal()" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--muted);">&times;</button>
         </div>
 
-        <form method="POST" id="perm-edit-form" style="padding: var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4);">
+        <form method="POST" id="perm-edit-form" style="background: var(--white); padding: var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); max-height: 80vh; overflow-y: auto;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             
             <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
                 <label style="font-size: var(--fs-xs); font-weight: 700; color: var(--navy);">Assigned Platform Role <span style="color: var(--red);">*</span></label>

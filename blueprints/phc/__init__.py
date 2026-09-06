@@ -1,15 +1,29 @@
+from utils.notifications import create_notification, notify_patient
 import csv
 import io
-from flask import Response
 import json
 from datetime import datetime
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify, Response
 from utils.auth_helpers import role_required, get_current_user
+from utils.permissions import permission_required
 from utils.db import query_db, execute_db
+from utils.defaults import get_user_center_id, get_center_or_404
+from utils.constants import DEFAULT_ALLERGIES, DEFAULT_DISTRICT
+from app import limiter, DEFAULT_DEPARTMENT, DEFAULT_WALK_IN_REASON
+from utils.sanitize import sanitize_csv_cell, sanitize_text
 
 phc_bp = Blueprint('phc', __name__, url_prefix='/phc', template_folder='../../templates/phc')
 
 ALLOWED_ROLES = ('doctor', 'nurse', 'helper', 'ambulance_op', 'care_taker', 'therapist', 'pharmacist', 'lab_technician', 'receptionist', 'system_admin', 'region_admin')
+
+
+def mask_display_name(name):
+    if not name:
+        return 'Patient'
+    parts = str(name).strip().split()
+    if len(parts) == 1:
+        return parts[0][0] + '***'
+    return f"{parts[0][0]}. {parts[-1]}"
 
 
 @phc_bp.route('/')
@@ -21,8 +35,10 @@ def dashboard(username=None):
     if username and username.strip().lstrip('@') != user.get('username') and user.get('role') not in ('system_admin', 'region_admin'):
         return redirect(f'/phc/@{user.get("username")}')
         
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
-    center = query_db('SELECT * FROM centers WHERE id = %s', (center_id,), one=True) or {'id': 'FAC-BAKROL-01', 'name': 'Primary Health Centre 1', 'type': 'PHC', 'region': 'North Region'}
+    center_id = get_user_center_id(user)
+    center = query_db('SELECT * FROM centers WHERE id = %s', (center_id,), one=True) if center_id else None
+    if not center:
+        center = {'id': center_id, 'name': 'Healthcare Facility', 'type': 'PHC', 'region': DEFAULT_DISTRICT}
 
     queue = query_db("""
         SELECT a.*, p.full_name as patient_name, p.gender, p.dob, p.blood_group, p.is_high_risk 
@@ -47,7 +63,7 @@ def dashboard(username=None):
         if isinstance(pr.get('medicines'), str):
             try:
                 pr['medicines_parsed'] = json.loads(pr['medicines'])
-            except:
+            except Exception:
                 pr['medicines_parsed'] = []
         else:
             pr['medicines_parsed'] = pr.get('medicines', [])
@@ -98,9 +114,10 @@ def dashboard(username=None):
 @phc_bp.route('/queue')
 @phc_bp.route('/appointments')
 @role_required(*ALLOWED_ROLES)
+@permission_required('view_appointments')
 def queue():
     user = get_current_user()
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
+    center_id = get_user_center_id(user)
     center = query_db('SELECT * FROM centers WHERE id = %s', (center_id,), one=True) or {'name': center_id}
 
     all_appointments = query_db("""
@@ -118,61 +135,56 @@ def queue():
             prefix = 'EMG' if item.get('urgency') == 1 else 'OPD'
             item['token_number'] = f"{prefix}-{idx:03d}"
 
-    waiting_list = [a for a in all_appointments if a.get('status') in ('checked_in', 'scheduled')]
-    in_consultation = [a for a in all_appointments if a.get('status') == 'in_progress']
+    waiting_list = [a for a in all_appointments if a.get('status') in ('scheduled', 'checked_in')]
+    in_progress_list = [a for a in all_appointments if a.get('status') == 'in_progress']
     completed_list = [a for a in all_appointments if a.get('status') == 'completed']
+
+    patients_list = query_db('SELECT id, full_name, dob, gender, blood_group FROM patients ORDER BY full_name ASC') or []
+    doctors_list = query_db('SELECT id, full_name, role, designation FROM users WHERE role IN ("doctor", "nurse") AND is_active = 1 ORDER BY full_name ASC') or []
 
     stats = {
         'total': len(all_appointments),
         'waiting': len(waiting_list),
-        'in_progress': len(in_consultation),
+        'in_progress': len(in_progress_list),
         'completed': len(completed_list),
-        'critical': sum(1 for a in waiting_list if a.get('urgency') == 1),
-        'avg_wait_min': max(5, len(waiting_list) * 12)
+        'critical': len([a for a in waiting_list if a.get('urgency') == 1]),
+        'avg_wait_min': len(waiting_list) * 12
     }
 
-    doctors = query_db("""
-        SELECT id, full_name, designation, role 
-        FROM users 
-        WHERE (center_id = %s OR center_id IS NULL) AND is_active = 1 
-        ORDER BY full_name ASC
-    """, (center_id,)) or []
-
-    patients = query_db("""
-        SELECT id, full_name, phone, gender, dob, blood_group 
-        FROM patients 
-        ORDER BY full_name ASC LIMIT 100
-    """) or []
-
-    departments = [
-        'General OPD', 'Emergency / Triage', 'Pediatrics', 
-        'Obstetrics & Gynecology', 'Cardiology', 'Orthopedics', 
-        'General Surgery', 'Dental', 'Dermatology', 'Ayush / Wellness'
-    ]
-
-    return render_template('phc/queue.html', current_user=user, center=center,
-                           queue=waiting_list, in_consultation=in_consultation, 
-                           completed=completed_list, all_appointments=all_appointments,
-                           stats=stats, doctors=doctors, patients=patients, departments=departments)
+    return render_template('phc/queue.html', 
+                           current_user=user, 
+                           center=center, 
+                           queue=waiting_list,
+                           in_consultation=in_progress_list,
+                           completed=completed_list,
+                           all_appointments=all_appointments,
+                           appointments=all_appointments,
+                           waiting_list=waiting_list,
+                           in_progress_list=in_progress_list,
+                           completed_list=completed_list,
+                           patients_list=patients_list,
+                           doctors_list=doctors_list,
+                           stats=stats)
 
 
-@phc_bp.route('/appointments/book', methods=['POST'])
 @phc_bp.route('/queue/generate-token', methods=['POST'])
+@phc_bp.route('/appointments/book', methods=['POST'])
 @role_required(*ALLOWED_ROLES)
+@permission_required('manage_appointments')
 def book_appointment():
     from utils.audit import log_audit
     user = get_current_user()
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
+    center_id = get_user_center_id(user)
     data = request.get_json(silent=True) or request.form.to_dict()
 
     patient_id = (data.get('patient_id') or '').strip()
     doctor_id = data.get('doctor_id') or None
-    department = (data.get('department') or 'General OPD').strip()
-    reason = (data.get('reason') or 'Walk-in OPD Consultation').strip()
+    department = (data.get('department') or DEFAULT_DEPARTMENT).strip()
+    reason = (data.get('reason') or DEFAULT_WALK_IN_REASON).strip()
     urgency_raw = data.get('urgency', 3)
     try:
         urgency = int(urgency_raw)
-    except:
+    except Exception:
         urgency = 3
 
     status = (data.get('status') or 'checked_in').strip()
@@ -180,7 +192,7 @@ def book_appointment():
     if slot_time_str:
         try:
             slot_time = datetime.strptime(slot_time_str, '%Y-%m-%dT%H:%M')
-        except:
+        except Exception:
             slot_time = datetime.now()
     else:
         slot_time = datetime.now()
@@ -206,6 +218,15 @@ def book_appointment():
 
     log_audit('appointment_booked', 'appointment', appt_id)
 
+    fac = query_db('SELECT name FROM centers WHERE id = %s', (center_id,), one=True)
+    fac_name = fac['name'] if fac else (center_id or 'Healthcare Center')
+    notify_patient(
+        patient_id,
+        f'Appointment Scheduled (Token #{token_number})',
+        f'An OPD appointment has been scheduled for you at {fac_name} on {slot_time.strftime("%b %d, %Y at %I:%M %p")}. Department: {department}. Token #{token_number}.',
+        '/patient/appointments'
+    )
+
     if request.is_json:
         return jsonify({
             'ok': True,
@@ -220,41 +241,64 @@ def book_appointment():
 
 
 @phc_bp.route('/queue/<int:appointment_id>/update-status', methods=['POST'])
+@phc_bp.route('/queue/<int:appointment_id>/status', methods=['POST'])
 @role_required(*ALLOWED_ROLES)
-def update_queue_status(appointment_id):
+@permission_required('manage_appointments')
+def update_appointment_status(appointment_id):
     from utils.audit import log_audit
     user = get_current_user()
     data = request.get_json(silent=True) or request.form.to_dict()
-    new_status = (data.get('status') or '').strip()
-    doctor_id = data.get('doctor_id') or (user['id'] if user['role'] in ('doctor', 'medical_officer') else None)
+    new_status = data.get('status', '').strip()
+
+    valid_statuses = ('scheduled', 'checked_in', 'in_progress', 'completed', 'cancelled', 'no_show')
+    if new_status not in valid_statuses:
+        if request.is_json:
+            return jsonify({'ok': False, 'error': 'Invalid status'}), 400
+        flash('Invalid status provided.', 'error')
+        return redirect(url_for('phc.queue'))
 
     appt = query_db('SELECT * FROM appointments WHERE id = %s', (appointment_id,), one=True)
     if not appt:
         if request.is_json:
-            return jsonify({'ok': False, 'error': 'Appointment not found.'}), 404
-        flash('Appointment not found.', 'error')
+            return jsonify({'ok': False, 'error': 'Appointment not found'}), 404
+        flash('Appointment record not found.', 'error')
         return redirect(url_for('phc.queue'))
 
-    if new_status == 'in_progress':
-        execute_db("""
-            UPDATE appointments 
-            SET status = 'in_progress', doctor_id = COALESCE(%s, doctor_id)
-            WHERE id = %s
-        """, (doctor_id, appointment_id))
-    elif new_status == 'completed':
-        execute_db("""
-            UPDATE appointments 
-            SET status = 'completed', end_time = NOW()
-            WHERE id = %s
-        """, (appointment_id,))
-    elif new_status in ('checked_in', 'scheduled', 'no_show', 'cancelled'):
-        execute_db("""
-            UPDATE appointments 
-            SET status = %s
-            WHERE id = %s
-        """, (new_status, appointment_id))
+    doctor_id = appt.get('doctor_id')
+    if new_status == 'in_progress' and not doctor_id and user.get('role') == 'doctor':
+        doctor_id = user['id']
 
-    log_audit('queue_status_updated', 'appointment', appointment_id)
+    execute_db("""
+        UPDATE appointments 
+        SET status = %s, doctor_id = %s 
+        WHERE id = %s
+    """, (new_status, doctor_id, appointment_id))
+
+    log_audit('appointment_status_updated', 'appointment', appointment_id, {'status': new_status})
+
+    status_disp = new_status.replace('_', ' ').title()
+    if new_status == 'in_progress':
+        doc_name = user.get('full_name') or user.get('username')
+        notify_patient(
+            appt['patient_id'],
+            'Consultation In Progress',
+            f'You are now being consulted by Dr. {doc_name} for Token #{appt.get("token_number") or appointment_id}.',
+            '/patient/appointments'
+        )
+    elif new_status == 'completed':
+        notify_patient(
+            appt['patient_id'],
+            'Consultation Completed',
+            f'Your visit for Token #{appt.get("token_number") or appointment_id} has been completed. Check your records for clinical summary and prescriptions.',
+            '/patient/records'
+        )
+    else:
+        notify_patient(
+            appt['patient_id'],
+            f'Appointment Update: {status_disp}',
+            f'Your appointment (Token #{appt.get("token_number") or appointment_id}) status has been updated to {status_disp}.',
+            '/patient/appointments'
+        )
 
     if request.is_json:
         return jsonify({'ok': True, 'appointment_id': appointment_id, 'new_status': new_status})
@@ -265,22 +309,23 @@ def update_queue_status(appointment_id):
 
 @phc_bp.route('/queue/display')
 @role_required(*ALLOWED_ROLES)
+@permission_required('view_appointments')
 def queue_display():
     user = get_current_user()
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
-    center = query_db('SELECT * FROM centers WHERE id = %s', (center_id,), one=True) or {'name': 'Primary Health Centre'}
+    center_id = get_user_center_id(user)
+    center = query_db('SELECT * FROM centers WHERE id = %s', (center_id,), one=True) or {'id': center_id, 'name': 'Healthcare Facility'}
     return render_template('phc/queue_display.html', current_user=user, center=center)
 
 
 @phc_bp.route('/queue/display/data')
-@role_required(*ALLOWED_ROLES)
 def queue_display_data():
     user = get_current_user()
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
-    center = query_db('SELECT * FROM centers WHERE id = %s', (center_id,), one=True) or {'name': center_id}
+    center_id = get_user_center_id(user)
+    center = query_db('SELECT * FROM centers WHERE id = %s', (center_id,), one=True) or {'id': center_id, 'name': 'Healthcare Facility'}
 
     items = query_db("""
-        SELECT a.*, p.full_name as patient_name, u.full_name as doctor_name, u.designation as doctor_designation
+        SELECT a.id, a.token_number, a.department, a.urgency, a.status, a.slot_time,
+               p.full_name as patient_name, u.full_name as doctor_name, u.designation as doctor_designation
         FROM appointments a
         LEFT JOIN patients p ON a.patient_id = p.id
         LEFT JOIN users u ON a.doctor_id = u.id
@@ -296,9 +341,9 @@ def queue_display_data():
     in_consultation = [
         {
             'token': a.get('token_number'),
-            'patient': a.get('patient_name') or a.get('patient_id'),
+            'patient': mask_display_name(a.get('patient_name')),
             'doctor': a.get('doctor_name') or 'Medical Officer',
-            'department': a.get('department') or 'General OPD',
+            'department': a.get('department') or DEFAULT_DEPARTMENT,
             'urgency': a.get('urgency')
         }
         for a in items if a.get('status') == 'in_progress'
@@ -308,8 +353,8 @@ def queue_display_data():
     next_in_line = [
         {
             'token': a.get('token_number'),
-            'patient': (a.get('patient_name') or a.get('patient_id'))[:15],
-            'department': a.get('department') or 'General OPD',
+            'patient': mask_display_name(a.get('patient_name')),
+            'department': a.get('department') or DEFAULT_DEPARTMENT,
             'urgency': a.get('urgency'),
             'est_time': f"~{idx * 10} mins"
         }
@@ -328,6 +373,7 @@ def queue_display_data():
 
 @phc_bp.route('/referrals/<int:referral_id>/enqueue', methods=['POST'])
 @role_required(*ALLOWED_ROLES)
+@permission_required('manage_referrals')
 def enqueue_referral(referral_id):
     from utils.audit import log_audit
     user = get_current_user()
@@ -367,9 +413,10 @@ def enqueue_referral(referral_id):
 @phc_bp.route('/consultation', methods=['GET', 'POST'])
 @phc_bp.route('/consultation/<patient_id>', methods=['GET', 'POST'])
 @role_required('doctor', 'nurse', 'system_admin')
+@permission_required('create_consultation')
 def consultation(patient_id=None):
     user = get_current_user()
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
+    center_id = get_user_center_id(user)
     
     if request.method == 'POST':
         data = request.get_json(silent=True) or request.form.to_dict()
@@ -432,6 +479,15 @@ def consultation(patient_id=None):
             UPDATE appointments SET status = 'completed'
             WHERE patient_id = %s AND center_id = %s AND status IN ('scheduled', 'checked_in', 'in_progress')
         """, (target_patient_id, center_id))
+
+        doctor_name = user.get('full_name') or user.get('username')
+        diag_summary = diagnosis if diagnosis else 'General Consultation'
+        notify_patient(
+            target_patient_id,
+            f'Consultation Completed: {title}',
+            f'Your clinical consultation with Dr. {doctor_name} has been completed. Diagnosis: {diag_summary}. Prescriptions and clinical records updated.',
+            '/patient/records'
+        )
         
         if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return jsonify({
@@ -464,7 +520,7 @@ def consultation(patient_id=None):
                 if isinstance(r.get('data'), str):
                     try:
                         r['data_parsed'] = json.loads(r['data'])
-                    except:
+                    except Exception:
                         r['data_parsed'] = {}
                 else:
                     r['data_parsed'] = r.get('data', {})
@@ -481,7 +537,7 @@ def consultation(patient_id=None):
                 if isinstance(p.get('medicines'), str):
                     try:
                         p['medicines_parsed'] = json.loads(p['medicines'])
-                    except:
+                    except Exception:
                         p['medicines_parsed'] = []
                 else:
                     p['medicines_parsed'] = p.get('medicines', [])
@@ -494,9 +550,10 @@ def consultation(patient_id=None):
 @phc_bp.route('/teleconsult')
 @phc_bp.route('/contact')
 @role_required(*ALLOWED_ROLES)
+@permission_required('teleconsult')
 def teleconsult():
     user = get_current_user()
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
+    center_id = get_user_center_id(user)
     is_admin = user.get('role') in ('system_admin', 'region_admin')
 
     teleconsults = query_db("""
@@ -534,10 +591,11 @@ def teleconsult():
 
 @phc_bp.route('/teleconsult/create', methods=['POST'])
 @role_required(*ALLOWED_ROLES)
+@permission_required('teleconsult')
 def create_teleconsult():
     from utils.audit import log_audit
     user = get_current_user()
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
+    center_id = get_user_center_id(user)
 
     patient_id = request.form.get('patient_id', '').strip()
     doctor_id = request.form.get('doctor_id', '').strip()
@@ -577,9 +635,12 @@ def create_teleconsult():
 
 
 @phc_bp.route('/teleconsult/room/<int:session_id>')
-@role_required(*ALLOWED_ROLES)
 def teleconsult_room(session_id):
     user = get_current_user()
+    if not user:
+        flash('Please log in to access the teleconsultation room.', 'error')
+        return redirect(url_for('auth.login'))
+
     session_data = query_db("""
         SELECT t.*, p.full_name as patient_name, p.gender, p.dob, p.blood_group, p.allergies, p.chronic_conditions, p.phone as patient_phone,
                u.full_name as doctor_name, u.role as doctor_role, u.designation as doctor_designation,
@@ -593,9 +654,18 @@ def teleconsult_room(session_id):
 
     if not session_data:
         flash('Teleconsultation session not found.', 'error')
+        if user.get('role') == 'patient':
+            return redirect(url_for('patient.patient_teleconsult', username=user.get('username')))
         return redirect(url_for('phc.teleconsult'))
 
-    if session_data['status'] == 'requested':
+    if user.get('role') == 'patient':
+        pat = query_db('SELECT id FROM patients WHERE linked_user_id = %s', (user['id'],), one=True)
+        if not pat or pat['id'] != session_data['patient_id']:
+            abort(403)
+    elif user.get('role') not in ALLOWED_ROLES:
+        abort(403)
+
+    if session_data['status'] == 'requested' and user.get('role') in ('doctor', 'nurse', 'system_admin', 'region_admin'):
         execute_db("UPDATE teleconsult_sessions SET status = 'active', started_at = COALESCE(started_at, NOW()) WHERE id = %s", (session_id,))
         session_data['status'] = 'active'
 
@@ -604,17 +674,17 @@ def teleconsult_room(session_id):
         try:
             parsed = json.loads(allergies)
             session_data['allergies_list'] = parsed if isinstance(parsed, list) else [str(parsed)]
-        except:
+        except Exception:
             session_data['allergies_list'] = [allergies]
     else:
-        session_data['allergies_list'] = ['Not Allergic']
+        session_data['allergies_list'] = [DEFAULT_ALLERGIES]
 
     conditions = session_data.get('chronic_conditions')
     if isinstance(conditions, str):
         try:
             parsed = json.loads(conditions)
             session_data['conditions_list'] = parsed if isinstance(parsed, list) else [str(parsed)]
-        except:
+        except Exception:
             session_data['conditions_list'] = [conditions]
     else:
         session_data['conditions_list'] = []
@@ -631,7 +701,7 @@ def teleconsult_room(session_id):
         if isinstance(r.get('data'), str):
             try:
                 r['data_parsed'] = json.loads(r['data'])
-            except:
+            except Exception:
                 r['data_parsed'] = {}
         else:
             r['data_parsed'] = r.get('data', {})
@@ -648,13 +718,14 @@ def teleconsult_room(session_id):
         if isinstance(p.get('medicines'), str):
             try:
                 p['medicines_parsed'] = json.loads(p['medicines'])
-            except:
+            except Exception:
                 p['medicines_parsed'] = []
         else:
             p['medicines_parsed'] = p.get('medicines', [])
 
     messages = query_db("""
-        SELECT tm.*, u.full_name as sender_name, u.role as sender_role
+        SELECT tm.*, u.full_name as sender_name, u.role as sender_role,
+               DATE_FORMAT(tm.sent_at, '%%h:%%i %%p') as time_formatted
         FROM teleconsult_messages tm
         LEFT JOIN users u ON tm.sender_id = u.id
         WHERE tm.session_id = %s
@@ -666,14 +737,30 @@ def teleconsult_room(session_id):
 
 
 @phc_bp.route('/teleconsult/room/<int:session_id>/message', methods=['POST'])
-@role_required(*ALLOWED_ROLES)
 def send_teleconsult_message(session_id):
     user = get_current_user()
-    data = request.get_json(silent=True) or request.form
+    if not user:
+        return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
+
+    session_data = query_db('SELECT * FROM teleconsult_sessions WHERE id = %s', (session_id,), one=True)
+    if not session_data:
+        return jsonify({'ok': False, 'error': 'Session not found'}), 404
+
+    if user.get('role') == 'patient':
+        pat = query_db('SELECT id FROM patients WHERE linked_user_id = %s', (user['id'],), one=True)
+        if not pat or pat['id'] != session_data['patient_id']:
+            return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+    elif user.get('role') not in ALLOWED_ROLES:
+        return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+
+    if session_data['status'] == 'completed':
+        return jsonify({'ok': False, 'error': 'Consultation has ended; messages cannot be added.'}), 400
+
+    data = request.get_json(silent=True) or request.form.to_dict()
     body = (data.get('body') or data.get('message') or '').strip()
 
     if not body:
-        return jsonify({'ok': False, 'success': False, 'error': 'Message body cannot be empty'}), 400
+        return jsonify({'ok': False, 'error': 'Message content cannot be empty'}), 400
 
     msg_id = execute_db("""
         INSERT INTO teleconsult_messages (session_id, sender_id, body)
@@ -689,17 +776,31 @@ def send_teleconsult_message(session_id):
             'sender_name': user.get('full_name') or user.get('username'),
             'sender_role': user.get('role'),
             'body': body,
-            'sent_at': datetime.now().strftime('%H:%M')
+            'sent_at': datetime.now().strftime('%I:%M %p')
         }
     })
 
 
 @phc_bp.route('/teleconsult/room/<int:session_id>/messages')
-@role_required(*ALLOWED_ROLES)
 def get_teleconsult_messages(session_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
+
+    session_data = query_db('SELECT * FROM teleconsult_sessions WHERE id = %s', (session_id,), one=True)
+    if not session_data:
+        return jsonify({'ok': False, 'error': 'Session not found'}), 404
+
+    if user.get('role') == 'patient':
+        pat = query_db('SELECT id FROM patients WHERE linked_user_id = %s', (user['id'],), one=True)
+        if not pat or pat['id'] != session_data['patient_id']:
+            return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+    elif user.get('role') not in ALLOWED_ROLES:
+        return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+
     messages = query_db("""
         SELECT tm.*, u.full_name as sender_name, u.role as sender_role,
-               DATE_FORMAT(tm.sent_at, '%%H:%%i') as time_formatted
+               DATE_FORMAT(tm.sent_at, '%%h:%%i %%p') as time_formatted
         FROM teleconsult_messages tm
         LEFT JOIN users u ON tm.sender_id = u.id
         WHERE tm.session_id = %s
@@ -711,6 +812,7 @@ def get_teleconsult_messages(session_id):
 
 @phc_bp.route('/teleconsult/room/<int:session_id>/complete', methods=['POST'])
 @role_required(*ALLOWED_ROLES)
+@permission_required('teleconsult')
 def complete_teleconsult(session_id):
     from utils.audit import log_audit
     user = get_current_user()
@@ -738,49 +840,56 @@ def complete_teleconsult(session_id):
     """, (combined_summary.strip(), session_id))
 
     meds_list = []
-    for i in range(len(meds_names)):
-        name = (meds_names[i] or "").strip()
-        if name:
-            meds_list.append({
-                "name": name,
-                "dosage": (meds_dosages[i] if i < len(meds_dosages) else "") or "1-0-1 after meals",
-                "duration": (meds_durations[i] if i < len(meds_durations) else "") or "5 days"
-            })
-
-    if not meds_list and raw_meds:
-        for line in raw_meds.splitlines():
+    if meds_names:
+        for i in range(len(meds_names)):
+            name = meds_names[i].strip()
+            if name:
+                dose = meds_dosages[i].strip() if i < len(meds_dosages) else "Standard"
+                dur = meds_durations[i].strip() if i < len(meds_durations) else "5 Days"
+                meds_list.append({"name": name, "dosage": dose, "frequency": dur})
+    elif raw_meds:
+        for line in raw_meds.replace(';', '\n').split('\n'):
             line = line.strip()
             if line:
-                meds_list.append({
-                    "name": line,
-                    "dosage": "As directed",
-                    "duration": "Course duration"
-                })
+                meds_list.append({"name": line, "dosage": "Standard", "frequency": "Daily"})
+
+    record_title = f"Teleconsultation Summary - Specialist Advice ({datetime.now().strftime('%b %d, %Y')})"
+    rec_data = {
+        "teleconsult_session_id": session_id,
+        "specialist": user_label,
+        "specialist_advice": specialist_advice,
+        "clinical_summary": clinical_summary,
+        "medicines": meds_list,
+        "notes": rx_notes
+    }
+
+    record_id = execute_db("""
+        INSERT INTO medical_records (patient_id, record_type, title, data, center_id, created_by)
+        VALUES (%s, 'consultation', %s, %s, %s, %s)
+    """, (session_data['patient_id'], record_title, json.dumps(rec_data), session_data['center_id'], user['id']))
 
     if meds_list:
         execute_db("""
-            INSERT INTO prescriptions (patient_id, medicines, notes, prescribed_by, center_id)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (session_data["patient_id"], json.dumps(meds_list), rx_notes or f"Teleconsultation Specialist Prescription (Session #{session_id})", user["id"], session_data["center_id"]))
-    record_data = {
-        'teleconsult_session_id': session_id,
-        'summary': clinical_summary,
-        'specialist_advice': specialist_advice,
-        'medicines_prescribed': meds_list
-    }
-    execute_db("""
-        INSERT INTO medical_records (patient_id, record_type, title, data, center_id, created_by)
-        VALUES (%s, 'consultation', %s, %s, %s, %s)
-    """, (session_data['patient_id'], f'Specialist Teleconsultation (#{session_id})', json.dumps(record_data), session_data['center_id'], user['id']))
+            INSERT INTO prescriptions (record_id, patient_id, medicines, notes, prescribed_by, center_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (record_id, session_data['patient_id'], json.dumps(meds_list), rx_notes or "Teleconsultation e-Prescription", user['id'], session_data['center_id']))
 
-    log_audit('teleconsult_completed', 'teleconsult_session', session_id)
-    flash(f'Teleconsultation session #{session_id} successfully concluded and clinical record saved.', 'success')
+    log_audit('teleconsult_completed', 'teleconsult_session', session_id, {'record_id': record_id})
+    doctor_name = user.get('full_name') or user.get('username')
+    notify_patient(
+        session_data['patient_id'],
+        'Teleconsultation Concluded',
+        f'Your teleconsultation session with Dr. {doctor_name} has concluded. Specialist clinical advice and prescriptions have been added to your medical records.',
+        '/patient/records'
+    )
+    flash(f"Teleconsultation #{session_id} successfully concluded and clinical record saved.", "success")
     return redirect(url_for('phc.teleconsult'))
 
 
 @phc_bp.route('/prescriptions')
 @phc_bp.route('/prescriptions/<patient_id>')
 @role_required('doctor', 'nurse', 'system_admin')
+@permission_required('manage_prescriptions')
 def prescriptions(patient_id=None):
     if patient_id:
         return redirect(url_for('phc.consultation', patient_id=patient_id))
@@ -789,9 +898,10 @@ def prescriptions(patient_id=None):
 
 @phc_bp.route('/inventory')
 @role_required(*ALLOWED_ROLES)
+@permission_required('view_inventory')
 def inventory():
     user = get_current_user()
-    selected_center_id = request.args.get('center_id') or request.args.get('facility') or user.get('center_id') or 'FAC-BAKROL-01'
+    selected_center_id = request.args.get('center_id') or request.args.get('facility') or get_user_center_id(user)
     search_q = request.args.get('q', '').strip()
     status_filter = request.args.get('status', '').strip()
     category_filter = request.args.get('category', '').strip()
@@ -848,12 +958,12 @@ def inventory():
                            total_count=total_count)
 
 
-
 @phc_bp.route('/inventory/export')
 @role_required(*ALLOWED_ROLES)
+@permission_required('view_inventory')
 def export_inventory_csv():
     user = get_current_user()
-    selected_center_id = request.args.get('center_id') or request.args.get('facility') or user.get('center_id') or 'FAC-BAKROL-01'
+    selected_center_id = request.args.get('center_id') or request.args.get('facility') or get_user_center_id(user)
     search_q = request.args.get('q', '').strip()
     status_filter = request.args.get('status', '').strip()
     category_filter = request.args.get('category', '').strip()
@@ -878,36 +988,38 @@ def export_inventory_csv():
     
     items = query_db(query, tuple(params)) or []
     if status_filter == 'low':
-        items = [it for it in items if it['quantity'] <= it['reorder_level']]
+        items = [item for item in items if item['quantity'] <= item['reorder_level']]
     elif status_filter == 'adequate':
-        items = [it for it in items if it['quantity'] > it['reorder_level']]
+        items = [item for item in items if item['quantity'] > item['reorder_level']]
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Center ID', 'Center Name', 'Item Name', 'Category', 'Quantity', 'Unit', 'Reorder Level', 'Expiry Date', 'Stock Status'])
+    writer.writerow(['Facility ID', 'Facility Name', 'Item Name', 'Category', 'Quantity', 'Unit', 'Reorder Level', 'Expiry Date', 'Status'])
     
-    for it in items:
-        status = 'Low Stock' if it['quantity'] <= it['reorder_level'] else 'Adequate'
-        exp = it['expiry_date'].strftime('%Y-%m-%d') if it.get('expiry_date') and hasattr(it['expiry_date'], 'strftime') else (it.get('expiry_date') or '')
+    for item in items:
+        status = 'LOW STOCK' if item['quantity'] <= item['reorder_level'] else 'Adequate'
+        exp = item['expiry_date'].strftime('%Y-%m-%d') if item.get('expiry_date') and hasattr(item['expiry_date'], 'strftime') else (str(item.get('expiry_date')) if item.get('expiry_date') else 'N/A')
         writer.writerow([
-            it['center_id'],
-            it.get('center_name') or it['center_id'],
-            it['item_name'],
-            it.get('category') or 'General',
-            it['quantity'],
-            it.get('unit') or 'units',
-            it.get('reorder_level') or 10,
-            exp,
-            status
+            sanitize_csv_cell(item.get('center_id')),
+            sanitize_csv_cell(item.get('center_name')),
+            sanitize_csv_cell(item.get('item_name')),
+            sanitize_csv_cell(item.get('category')),
+            sanitize_csv_cell(item.get('quantity')),
+            sanitize_csv_cell(item.get('unit')),
+            sanitize_csv_cell(item.get('reorder_level')),
+            sanitize_csv_cell(exp),
+            sanitize_csv_cell(status)
         ])
         
     csv_data = output.getvalue()
-    filename = f"inventory_export_{selected_center_id}.csv"
+    filename = f"inventory_export_{selected_center_id or 'all'}.csv"
     return Response(csv_data, mimetype='text/csv', headers={'Content-Disposition': f'attachment; filename={filename}'})
 
 
 @phc_bp.route('/inventory/import', methods=['POST'])
+@limiter.limit("5 per hour")
 @role_required(*ALLOWED_ROLES)
+@permission_required('manage_inventory')
 def import_inventory_csv():
     user = get_current_user()
     if 'file' not in request.files:
@@ -923,9 +1035,13 @@ def import_inventory_csv():
         flash('Please upload a valid CSV file (.csv).', 'danger')
         return redirect(url_for('phc.inventory'))
 
-    default_center_id = request.form.get('center_id') or user.get('center_id') or 'FAC-BAKROL-01'
+    if request.content_length and request.content_length > 5 * 1024 * 1024:
+        flash('Uploaded file exceeds 5MB size limit.', 'danger')
+        return redirect(url_for('phc.inventory'))
+
+    default_center_id = request.form.get('center_id') or get_user_center_id(user)
     if default_center_id == 'all':
-        default_center_id = user.get('center_id') or 'FAC-BAKROL-01'
+        default_center_id = get_user_center_id(user)
 
     try:
         content_str = file.stream.read().decode('utf-8-sig', errors='replace')
@@ -950,7 +1066,7 @@ def import_inventory_csv():
             row_dict = {}
             for idx, val in enumerate(row):
                 if idx < len(headers):
-                    row_dict[headers[idx]] = val.strip()
+                    row_dict[headers[idx]] = sanitize_csv_cell(val.strip())
 
             item_name = row_dict.get('item name') or row_dict.get('item_name') or row_dict.get('name') or (row[1] if len(row) > 1 else (row[0] if len(row) > 0 else ''))
             if not item_name or item_name.lower() in ('item name', 'item_name', 'name'):
@@ -965,7 +1081,7 @@ def import_inventory_csv():
             raw_qty = row_dict.get('quantity') or row_dict.get('qty') or (row[3] if len(row) > 3 else '0')
             try:
                 quantity = int(float(raw_qty))
-            except:
+            except Exception:
                 quantity = 0
                 
             unit = row_dict.get('unit') or (row[4] if len(row) > 4 else 'units')
@@ -975,7 +1091,7 @@ def import_inventory_csv():
             raw_reorder = row_dict.get('reorder level') or row_dict.get('reorder_level') or row_dict.get('reorder') or (row[5] if len(row) > 5 else '10')
             try:
                 reorder_level = int(float(raw_reorder))
-            except:
+            except Exception:
                 reorder_level = 10
                 
             expiry_date = row_dict.get('expiry date') or row_dict.get('expiry_date') or row_dict.get('expiry') or (row[6] if len(row) > 6 else None)
@@ -1001,22 +1117,24 @@ def import_inventory_csv():
 
 @phc_bp.route('/inventory/template')
 @role_required(*ALLOWED_ROLES)
+@permission_required('view_inventory')
 def download_inventory_template():
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(['center_id', 'item_name', 'category', 'quantity', 'unit', 'reorder_level', 'expiry_date'])
     writer.writerow(['FAC-BAKROL-01', 'Paracetamol 500mg Tablets', 'Analgesic', '500', 'tablets', '100', '2027-12-31'])
     writer.writerow(['FAC-BAKROL-01', 'Amoxicillin 250mg Capsules', 'Antibiotic', '250', 'capsules', '50', '2027-06-30'])
-    writer.writerow(['FAC-002', 'Normal Saline 0.9% IV 500ml', 'IV Fluids', '100', 'bottles', '30', '2027-10-31'])
+    writer.writerow(['FAC-SKH-02', 'Normal Saline 0.9% IV 500ml', 'IV Fluids', '100', 'bottles', '30', '2027-10-31'])
     
     return Response(output.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=inventory_import_template.csv'})
 
 
 @phc_bp.route('/referrals')
 @role_required(*ALLOWED_ROLES)
+@permission_required('manage_referrals')
 def referrals():
     user = get_current_user()
-    center_id = user.get('center_id') or 'FAC-BAKROL-01'
+    center_id = get_user_center_id(user)
     is_admin = user.get('role') in ('system_admin', 'region_admin')
 
     status_filter = request.args.get('status', '').strip()
@@ -1094,10 +1212,11 @@ def referrals():
 
 @phc_bp.route('/referrals/create', methods=['POST'])
 @role_required(*ALLOWED_ROLES)
+@permission_required('manage_referrals')
 def create_referral():
     from utils.audit import log_audit
     user = get_current_user()
-    from_center = user.get('center_id') or request.form.get('from_center') or 'FAC-BAKROL-01'
+    from_center = get_user_center_id(user) or request.form.get('from_center')
 
     patient_id = request.form.get('patient_id', '').strip()
     to_center = request.form.get('to_center', '').strip()
@@ -1131,6 +1250,15 @@ def create_referral():
               f'Patient {patient_id} referred from {from_center}. Reason: {reason}',
               url_for('phc.referrals')))
 
+    dest_center = query_db('SELECT name FROM centers WHERE id = %s', (to_center,), one=True)
+    dest_name = dest_center['name'] if dest_center else to_center
+    notify_patient(
+        patient_id,
+        f'Referral Transfer Initiated (REF-{ref_id})',
+        f'You have been referred to {dest_name} for specialized medical care. Urgency: {urgency.title()}. Reason: {reason}',
+        '/patient/records'
+    )
+
     log_audit('referral_initiated', 'referral', ref_id)
     flash(f'Referral REF-{ref_id} successfully initiated for transfer to destination center.', 'success')
     return redirect(url_for('phc.referrals'))
@@ -1138,6 +1266,7 @@ def create_referral():
 
 @phc_bp.route('/referrals/<int:referral_id>/update-status', methods=['POST'])
 @role_required(*ALLOWED_ROLES)
+@permission_required('manage_referrals')
 def update_referral_status(referral_id):
     from utils.audit import log_audit
     user = get_current_user()
@@ -1191,6 +1320,26 @@ def update_referral_status(referral_id):
         """, (ou['id'], f'Referral REF-{referral_id} Updated to {new_status.replace("_", " ").title()}',
               f'Status update recorded by {user.get("full_name") or user.get("username")}',
               url_for('phc.referrals')))
+
+    status_display = new_status.replace('_', ' ').title()
+    notes_extra = f" (Notes: {transition_notes})" if transition_notes else ""
+    if new_status == 'accepted':
+        body_msg = f'Your referral transfer case (REF-{referral_id}) has been accepted by the destination healthcare facility.{notes_extra}'
+    elif new_status == 'in_transit':
+        body_msg = f'Ambulance transfer is now in transit for referral case REF-{referral_id}.{notes_extra}'
+    elif new_status == 'completed':
+        body_msg = f'Your referral consultation at the destination facility (REF-{referral_id}) has been successfully completed.{notes_extra}'
+    elif new_status == 'counter_referred':
+        body_msg = f'You have been counter-referred back to your primary healthcare center with specialist advice.{notes_extra}'
+    else:
+        body_msg = f'Your referral REF-{referral_id} status is now {status_display}.{notes_extra}'
+
+    notify_patient(
+        referral['patient_id'],
+        f'Referral Update: {status_display}',
+        body_msg,
+        '/patient/records'
+    )
 
     log_audit('referral_status_updated', 'referral', referral_id)
     flash(f'Referral REF-{referral_id} status updated to {new_status.replace("_", " ").title()}.', 'success')

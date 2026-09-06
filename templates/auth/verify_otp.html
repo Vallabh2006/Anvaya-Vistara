@@ -20,6 +20,7 @@
         </p>
 
         <form method="POST" id="otp-form" style="display: flex; flex-direction: column; gap: var(--sp-4);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="field" style="margin: 0;">
                 <input type="text" id="otp" name="otp" maxlength="6" pattern="[0-9]{6}" required autofocus
                        placeholder="000000"
@@ -37,6 +38,7 @@
 
         <div style="margin-top: var(--sp-6); border-top: 1px solid var(--line); padding-top: var(--sp-4); display: flex; justify-content: space-between; align-items: center; font-size: var(--fs-xs);">
             <form method="POST" action="{{ url_for('auth.resend_otp') }}" style="margin: 0;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" style="background: none; border: none; color: var(--blue); font-weight: 600; cursor: pointer; font-size: var(--fs-xs); padding: 0;">
                     Resend Code
                 </button>

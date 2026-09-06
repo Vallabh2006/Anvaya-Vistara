@@ -9,34 +9,34 @@
         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         <h1 style="color:var(--white); margin-top: var(--sp-4); font-size: var(--fs-2xl); text-align: center;">{{ _('app.name') }}</h1>
         <p style="opacity:0.85; margin-top: var(--sp-2); text-align:center; max-width:380px; font-size: var(--fs-sm); line-height: 1.6;">
-            Universal Rural Healthcare Platform connecting patients, primary health centres, clinical specialists, and regional health administration.
+            A unified digital health ecosystem connecting rural Sub-Centers, PHCs, and district referral hospitals across Anand Region.
         </p>
 
         <div style="margin-top: var(--sp-8); background: rgba(255,255,255,0.1); border-radius: var(--radius-lg); padding: var(--sp-5); max-width: 380px; border: 1px solid rgba(255,255,255,0.15); width: 100%;">
             <div style="display: flex; gap: var(--sp-3); margin-bottom: var(--sp-3); align-items: center;">
-                <span style="font-size: var(--fs-sm);">Unified EHR & Diagnostic Lab Records</span>
+                <span style="font-size: var(--fs-sm);">Instant Digital Health Record Access</span>
             </div>
             <div style="display: flex; gap: var(--sp-3); margin-bottom: var(--sp-3); align-items: center;">
-                <span style="font-size: var(--fs-sm);">Connected PHC & Sub-Center Teleconsultations</span>
+                <span style="font-size: var(--fs-sm);">Unified PHC Clinical Consultations</span>
             </div>
-            <div style="display: flex; gap: var(--sp-3); margin-bottom: var(--sp-3); align-items: center;">
-                <span style="font-size: var(--fs-sm);">Instant 108 Emergency Ambulance Dispatch</span>
+            <div style="display: flex; gap: var(--sp-3); align-items: center;">
+                <span style="font-size: var(--fs-sm);">Secure Multi-Factor & Role-Based Access</span>
             </div>
         </div>
     </div>
 
     <div style="flex:1.2; display:flex; align-items:center; justify-content:center; padding: var(--sp-6) var(--sp-4); overflow-y: auto;">
-        <div style="width:100%; max-width:520px; background: var(--white); padding: var(--sp-8); border-radius: var(--radius-lg); border: 1px solid var(--line); box-shadow: var(--shadow-sm); margin: var(--sp-4) 0;">
+        <div style="width:100%; max-width:480px; background: var(--white); padding: var(--sp-8); border-radius: var(--radius-lg); border: 1px solid var(--line); box-shadow: var(--shadow-sm); margin: var(--sp-4) 0;">
             
-            <div style="margin-bottom: var(--sp-5);">
+            <div style="margin-bottom: var(--sp-6);">
                 <div style="display: inline-block; background: var(--sky); color: var(--navy); padding: 4px 10px; border-radius: 6px; font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; margin-bottom: 8px;">
-                    Authentication Portal
+                    Authorized Portal Sign In
                 </div>
-                <h2 style="margin: 0 0 6px; color: var(--navy); font-size: 1.5rem; font-weight: 700;">Sign In to Account</h2>
-                <p style="margin: 0; color: var(--muted); font-size: var(--fs-sm);">Access your patient records, staff workspace, or management panel</p>
+                <h2 style="margin: 0 0 6px; color: var(--navy); font-size: 1.5rem; font-weight: 700;">Welcome Back</h2>
+                <p style="margin: 0; color: var(--muted); font-size: var(--fs-sm);">Sign in to your clinical or patient account</p>
             </div>
 
-            <div style="display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px; margin-bottom: var(--sp-5);">
+            <div style="display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px; margin-bottom: var(--sp-5); gap: 4px;">
                 <button type="button" id="tab-btn-username" onclick="switchLoginTab('username')"
                         style="flex: 1; padding: 9px 12px; border: none; border-radius: 6px; font-size: var(--fs-xs); font-weight: 700; cursor: pointer; transition: all 0.2s; background: {% if active_tab != 'email' %}var(--white){% else %}transparent{% endif %}; color: {% if active_tab != 'email' %}var(--navy){% else %}var(--muted){% endif %}; box-shadow: {% if active_tab != 'email' %}0 1px 3px rgba(0,0,0,0.1){% else %}none{% endif %};">
                     Username & Password
@@ -48,13 +48,14 @@
             </div>
 
             <form method="POST" id="username-login-form" style="display: {% if active_tab != 'email' %}flex{% else %}none{% endif %}; flex-direction: column; gap: var(--sp-4);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="login_type" value="username">
                 
                 <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
                     <label for="username" style="font-size: var(--fs-sm); font-weight: 600; color: var(--navy);">
-                        Username <span style="color: var(--red);">*</span>
+                        Username or Email <span style="color: var(--red);">*</span>
                     </label>
-                    <input type="text" id="username" name="username" required autocomplete="username" value="{{ form_data.get('username', '') }}" placeholder="e.g. admin, dr_priya, or username"
+                    <input type="text" id="username" name="username" required minlength="3" maxlength="100" pattern="^[a-z0-9._@-]+$" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username" oninput="this.value = this.value.toLowerCase()" title="Please enter your lowercase username or registered email address." value="{{ form_data.get('username', '') }}" placeholder="e.g. admin, dr_priya, or name@example.com"
                            style="width: 100%; height: 42px; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm); background: var(--white); outline: none; box-sizing: border-box;">
                 </div>
 
@@ -67,7 +68,7 @@
                             Forgot Password?
                         </a>
                     </div>
-                    <input type="password" id="password" name="password" required autocomplete="current-password" placeholder="Enter your account password"
+                    <input type="password" id="password" name="password" required minlength="8" maxlength="128" autocomplete="current-password" placeholder="Enter your account password"
                            style="width: 100%; height: 42px; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm); background: var(--white); outline: none; box-sizing: border-box;">
                 </div>
 
@@ -77,13 +78,14 @@
             </form>
 
             <form method="POST" id="email-login-form" style="display: {% if active_tab == 'email' %}flex{% else %}none{% endif %}; flex-direction: column; gap: var(--sp-4);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="login_type" value="email">
                 
                 <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
                     <label for="email" style="font-size: var(--fs-sm); font-weight: 600; color: var(--navy);">
                         Registered Email Address <span style="color: var(--red);">*</span>
                     </label>
-                    <input type="email" id="email" name="email" autocomplete="email" value="{{ form_data.get('email', '') }}" placeholder="e.g. name@example.com"
+                    <input type="email" id="email" name="email" maxlength="100" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="email" value="{{ form_data.get('email', '') }}" placeholder="e.g. name@example.com"
                            style="width: 100%; height: 42px; padding: 8px 12px; border: 1.5px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm); background: var(--white); outline: none; box-sizing: border-box;">
                 </div>
 

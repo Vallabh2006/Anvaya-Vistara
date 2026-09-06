@@ -29,12 +29,16 @@
         </div>
 
         <div style="display: flex; gap: var(--sp-2);">
+            {% if can('view_appointments') %}
             <a href="/phc/queue" class="btn" style="background: var(--white); color: var(--navy);">
                  OPD Patient Queue
             </a>
+            {% endif %}
+            {% if can('create_consultation') %}
             <a href="/phc/consultation" class="btn" style="background: var(--green); color: #fff;">
                 + New Consultation
             </a>
+            {% endif %}
         </div>
     </div>
 
@@ -108,23 +112,26 @@
     Clinical Quick Actions
 </h3>
 <div class="cards" style="margin-bottom: var(--sp-6);">
+    {% if can('view_appointments') %}
     <a href="/phc/appointments" class="card" style="text-decoration: none; color: inherit;">
-
         <div class="card-label">Appointments</div>
         <p style="font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2);">Manage scheduled appointments, triage priority, and attend patients.</p>
     </a>
+    {% endif %}
 
+    {% if can('teleconsult') %}
     <a href="/phc/contact" class="card" style="text-decoration: none; color: inherit;">
-
         <div class="card-label">Contact & Specialist Support</div>
         <p style="font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2);">Direct remote specialist contact and live teleconsultation sessions.</p>
     </a>
+    {% endif %}
 
+    {% if can('view_inventory') %}
     <a href="/phc/inventory" class="card" style="text-decoration: none; color: inherit;">
-
         <div class="card-label">Pharmacy & Supplies</div>
         <p style="font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2);">Monitor medicine inventory, vaccines, and emergency stock levels.</p>
     </a>
+    {% endif %}
 </div>
 
 <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--sp-6); margin-bottom: var(--sp-6);">
@@ -135,7 +142,7 @@
                 <h3 style="margin: 0; font-size: var(--fs-md); color: var(--navy);"> Today's Appointments</h3>
                 <p style="margin: 2px 0 0; font-size: var(--fs-xs); color: var(--muted);">Patients scheduled and checked in for clinical examination</p>
             </div>
-            <a href="/phc/appointments" class="btn sm outline">View All Appointments</a>
+            {% if can('view_appointments') %}<a href="/phc/appointments" class="btn sm outline">View All Appointments</a>{% endif %}
         </div>
 
         {% if queue %}
@@ -169,9 +176,13 @@
                                 {% endif %}
                             </td>
                             <td style="padding: var(--sp-3) var(--sp-2); border-bottom: 1px solid var(--line); text-align: right;">
+                                {% if can('create_consultation') %}
                                 <a href="/phc/consultation/{{ q.patient_id }}" class="btn sm" style="background: var(--blue); color: #fff; font-size: 11px; padding: 4px 10px;">
                                     Consult
                                 </a>
+                                {% else %}
+                                <span style="color: var(--muted); font-size: 11px;">In Queue</span>
+                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}
@@ -193,7 +204,7 @@
                 <h3 style="margin: 0; font-size: var(--fs-md); color: var(--navy);"> Pharmacy Stock Alerts</h3>
                 <p style="margin: 2px 0 0; font-size: var(--fs-xs); color: var(--muted);">Medicines needing immediate restock</p>
             </div>
-            <a href="/phc/inventory" class="btn sm outline">All Inventory</a>
+            {% if can('view_inventory') %}<a href="/phc/inventory" class="btn sm outline">All Inventory</a>{% endif %}
         </div>
 
         {% if low_stock_items %}

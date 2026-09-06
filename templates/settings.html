@@ -21,6 +21,7 @@
                 Enter Code
             </a>
             <form method="POST" action="/settings/cancel-email-change" style="margin: 0;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn sm" style="background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 6px 12px; border-radius: var(--radius); font-weight: 600; font-size: var(--fs-xs); cursor: pointer;">
                     Cancel
                 </button>
@@ -118,6 +119,7 @@
         <div style="display: flex; flex-direction: column; gap: var(--sp-6);">
 
             <form method="POST" action="/settings" id="profile-settings-form" style="display: flex; flex-direction: column; gap: var(--sp-6);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="current_password" id="profile_current_password" value="">
 
                 <div class="card" id="sec-profile" style="padding: var(--sp-6); background: var(--white); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);">
@@ -309,6 +311,7 @@
             </form>
 
             <form method="POST" action="/settings" id="password-change-form" style="display: flex; flex-direction: column; gap: var(--sp-4);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="full_name" value="{{ current_user.full_name }}">
                 <input type="hidden" name="username" value="{{ current_user.username }}">
                 <input type="hidden" name="email" value="{{ current_user.email or '' }}">

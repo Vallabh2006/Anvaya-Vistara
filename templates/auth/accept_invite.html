@@ -41,6 +41,7 @@
         </div>
 
         <form method="POST" style="display: flex; flex-direction: column; gap: var(--sp-4);">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
                 <label for="phone" style="font-size: var(--fs-sm); font-weight: 600; color: var(--navy);">
                     Phone Number

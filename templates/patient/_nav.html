@@ -13,7 +13,8 @@
 </a>
 <a href="/patient/teleconsult/@{{ current_user.username if current_user else '' }}"
     class="navitem {% if request.path.startswith('/patient/teleconsult') %}active{% endif %}">
-    <span class="nav-label">Teleconsultations <span style="font-size: 9px; text-transform: uppercase; background: rgba(56,189,248,0.15); color: #0284c7; padding: 2px 6px; border-radius: 4px; font-weight: 700; margin-left: 4px;">Soon</span></span>
+    <span class="nav-label">Teleconsultations <span
+            style="font-size: 9px; text-transform: uppercase; background: rgba(56,189,248,0.15); color: #0284c7; padding: 2px 6px; border-radius: 4px; font-weight: 700; margin-left: 4px;">Soon</span></span>
 </a>
 <a href="/patient/map/@{{ current_user.username if current_user else '' }}"
     class="navitem {% if request.path.startswith('/patient/map') or request.path.startswith('/map') %}active{% endif %}">

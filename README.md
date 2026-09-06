@@ -1,8 +1,17 @@
+
 # Rural Healthcare Platform
   
 ## 1. Project Overview
 
-Integrated multi-tiered healthcare management platform for rural health networks, Primary Health Centres (PHCs), Community Health Centres (CHCs), Sub-Centres, and District Hospitals. It features triage priority OPD queue management, inter-hospital referral tracking with visual steppers, 2-step OTP password reset, patient medical records and inventory management..
+Anvaya Vistara is an integrated multi-tiered healthcare management platform designed for rural health networks, Primary Health Centres (PHCs), Community Health Centres (CHCs), Sub-Centres, and District Hospitals. It streamlines patient registration, triage queue management, inter-hospital referral tracking, inventory control, electronic health records (EHR), and two-step authentication recovery.
+
+### Key Features
+-  **OPD Queue & Token Management**: Triage priority token generation (OPD-001, EMG-001, REF-001), queue status progression (scheduled -> checked_in -> in_progress -> completed / no_show), live public display board polling, and patient estimated wait time calculations.
+-  **Inter-Hospital Referral Tracking**: Visual 5-stage referral transfer stepper and 1-click priority destination queue auto-enqueue between PHCs, CHCs, and District Hospitals.
+-  **2-Step Password Reset & Privacy**: Masked email privacy protection (e.g. va*************a@g***l.com) and mandatory 2-step OTP verification before new password creation.
+-  **Teleconsultation Feature Roadmap**: Modern glassmorphic Coming Soon feature pages for PHC clinical staff and patient portals.
+-  **Time Sync & Validation**: Server-side world clock verification endpoint (/api/time) and past slot booking prevention.
+-  **Database Recreation Script**: Standalone SQL database creation and seeding script (full_setup.sql) with RBAC permissions and default health facilities.
 
 ## 2. Available Routes & Specifications
 
@@ -69,19 +78,20 @@ Environment variables are loaded via `python-dotenv`. Active configuration is ex
 Key Configurations:
 -  **Database (MySQL):**  `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DB`
 -  **Security:**  `SECRET_KEY`, `SESSION_TYPE`
+-  **Email**: `ZOHO_EMAIL`, `ZOHO_PASSWORD`
 
 ## 4. Project Structure
 ```
 Anvaya-Vistara/
 │
+├── .env
+├── .env.example
 ├── app.py
 ├── config.py
-├── schema.sql
-├── full_setup.sql
-├── reset_and_seed.py
 ├── create_admin.py
 ├── requirements.txt
 ├── README.md
+├── sample.sql
 │
 ├── blueprints/
 │ ├── admin/
@@ -107,14 +117,7 @@ Anvaya-Vistara/
 │ ├── facilities/
 │ ├── patient/
 │ ├── phc/
-│ ├── region/
-│ └── shell.html
-│
-├── tests/
-│ ├── test_appointment_queue_referrals.py
-│ ├── test_email_masking_password_reset.py
-│ ├── test_referrals_and_teleconsult.py
-│ └── test_two_step_password_reset.py
+│ └── region/
 │
 ├── translations/
 │ ├── en.json
@@ -124,27 +127,35 @@ Anvaya-Vistara/
 ├── __init__.py
 ├── audit.py
 ├── auth_helpers.py
+├── constants.py
 ├── db.py
+├── defaults.py
 ├── email_helper.py
 ├── i18n.py
 ├── id_gen.py
+├── id_generator.py
+├── notifications.py
+├── permissions.py
+├── sanitize.py
 └── permissions.py
 ```
 
 ## 5. Technology Stack
 
--  **Backend:** Python 3.x, Flask (Web Framework)
--  **Database:** MySQL (DictCursor)
--  **Frontend:** HTML, CSS, JavaScript (Jinja2 Templates)
--  **Authentication:** Sessions, bcrypt (Password Hashing), pyotp (2FA/OTP)
+-  **Backend**: Python 3.x, Flask
+-  **Database**: MySQL (DictCursor)
+-  **Frontend**: HTML5, Vanilla CSS3, JavaScript
+-  **Authentication & Security**: Flask-Session, bcrypt, pyotp
 
 ## 6. Database Recreation & Testing
 
 -  **Recreate Complete Database:**
 
 ```bash
-mysql -u root -p rural_health_db < full_setup.sql
+mysql -u root -p rural_health_db < sample.sql
 ```
+
+-  **Run Automated Test Suite:**
 
 ## 7. Dependencies
 

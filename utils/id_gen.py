@@ -1,9 +1,10 @@
-
-
 from utils.db import query_db, execute_db
 
+ALLOWED_TABLES = {'patients', 'facilities', 'vehicles', 'users', 'centers'}
 
 def _next_seq(table, prefix_pattern):
+    if table not in ALLOWED_TABLES:
+        raise ValueError(f"Invalid table name for ID generation: {table}")
     row = query_db(
         f"SELECT COUNT(*) as cnt FROM {table} WHERE id LIKE %s",
         (prefix_pattern + '%',),

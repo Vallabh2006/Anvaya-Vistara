@@ -4,11 +4,19 @@ import smtplib
 from email.message import EmailMessage
 from flask import current_app
 
-SMTP_HOST = "smtppro.zoho.in"
-SMTP_PORT = 465
+def get_smtp_config():
+    host = os.getenv("SMTP_HOST", "smtppro.zoho.in")
+    port = int(os.getenv("SMTP_PORT", 465))
+    use_ssl = os.getenv("SMTP_USE_SSL", "true").lower() == "true"
+    timeout = int(os.getenv("SMTP_TIMEOUT", 10))
+    email = os.getenv("SMTP_EMAIL") or os.getenv("ZOHO_EMAIL")
+    password = os.getenv("SMTP_PASSWORD") or os.getenv("ZOHO_PASSWORD")
+    return host, port, use_ssl, timeout, email, password
 
-EMAIL = os.getenv("ZOHO_EMAIL")
-PASSWORD = os.getenv("ZOHO_PASSWORD")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtppro.zoho.in")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
+EMAIL = os.getenv("SMTP_EMAIL") or os.getenv("ZOHO_EMAIL")
+PASSWORD = os.getenv("SMTP_PASSWORD") or os.getenv("ZOHO_PASSWORD")
 
 
 def send_email(to: str, subject: str, body: str, html_body: str = None) -> bool:
@@ -19,7 +27,9 @@ def send_email(to: str, subject: str, body: str, html_body: str = None) -> bool:
     except Exception:
         pass
 
-    if not EMAIL or not PASSWORD:
+    host, port, use_ssl, timeout, email, password = get_smtp_config()
+
+    if not email or not password:
         print("Email credentials not configured in environment. Logged message:")
         print("To:", to)
         print("Subject:", subject)
@@ -38,16 +48,25 @@ def send_email(to: str, subject: str, body: str, html_body: str = None) -> bool:
     try:
         msg = EmailMessage()
         msg["Subject"] = subject
-        msg["From"] = EMAIL
+        msg["From"] = email
         msg["To"] = to.strip()
         msg.set_content(body)
 
         if html_body:
             msg.add_alternative(html_body, subtype="html")
 
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
-            smtp.login(EMAIL, PASSWORD)
-            smtp.send_message(msg)
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
+                smtp.login(email, password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+                try:
+                    smtp.starttls()
+                except Exception:
+                    pass
+                smtp.login(email, password)
+                smtp.send_message(msg)
         return True
     except Exception as e:
         print(f"Failed to send email: {e}")
@@ -168,14 +187,17 @@ Anvaya Vistara Security Team
     return send_email(to_new_email, subject, text_body, html_body)
 
 
-def send_staff_invite_email(to_email: str, full_name: str, invite_link: str, role: str) -> bool:
+def send_staff_invite_email(to_email: str, full_name: str = None, invite_link: str = None, role: str = None, **kwargs) -> bool:
+    link = invite_link or kwargs.get('invite_url') or ''
+    role_name = role or kwargs.get('role_title') or 'Staff Member'
+    center_name = kwargs.get('center_name') or 'Anvaya Vistara Healthcare Network'
     subject = "Anvaya Vistara - Staff Account Invitation"
 
     text_body = f"""Hello {full_name or 'Staff Member'},
 
-You have been invited to join the Anvaya Vistara Healthcare Network as a {role}.
-Please use the following link to activate your account:
-{invite_link}
+You have been invited to join {center_name} as a {role_name}.
+Please use the following link to activate your account and set your credentials:
+{link}
 
 Best regards,
 Anvaya Vistara Administration
@@ -185,8 +207,9 @@ Anvaya Vistara Administration
     <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
         <h2>Staff Account Invitation</h2>
         <p>Hello <strong>{full_name or 'Staff Member'}</strong>,</p>
-        <p>You have been invited to join the Anvaya Vistara Healthcare Network as a <strong>{role}</strong>.</p>
-        <p><a href="{invite_link}" style="display: inline-block; background: #1e40af; color: #fff; padding: 10px 18px; text-decoration: none; border-radius: 6px;">Activate Account</a></p>
+        <p>You have been invited to join <strong>{center_name}</strong> as a <strong>{role_name}</strong>.</p>
+        <p style="margin: 24px 0;"><a href="{link}" style="display: inline-block; background: #1e40af; color: #fff; padding: 10px 18px; text-decoration: none; border-radius: 6px; font-weight: bold;">Activate Account</a></p>
+        <p style="font-size: 12px; color: #666;">If the button above does not work, copy and paste this URL into your browser:<br>{link}</p>
     </div>
     """
 

@@ -11,15 +11,20 @@
         <p class="text-muted">Real-time inventory of essential medicines, emergency antidotes, IV fluids, vaccines, and equipment</p>
     </div>
     <div style="display: flex; gap: var(--sp-2); flex-wrap: wrap;">
+        {% if can('view_inventory') %}
         <a href="/phc/inventory/export?center_id={{ selected_center_id }}&category={{ category_filter }}&status={{ status_filter }}&q={{ search_q }}" class="btn" style="background: var(--navy); color: #fff;">
             Export CSV
         </a>
+        {% endif %}
+        {% if can('manage_inventory') %}
         <button type="button" class="btn" style="background: var(--blue); color: #fff;" onclick="var p = document.getElementById('phc-import-panel'); p.style.display = (p.style.display === 'none' ? 'block' : 'none');">
             Import CSV
         </button>
+        {% endif %}
     </div>
 </div>
 
+{% if can('manage_inventory') %}
 <div id="phc-import-panel" class="panel" style="display: none; margin-bottom: var(--sp-6); border: 2px dashed var(--blue); background: var(--bg);">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-3);">
         <div>
@@ -32,6 +37,7 @@
     </div>
 
     <form method="POST" action="/phc/inventory/import" enctype="multipart/form-data" style="display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div style="flex: 1; min-width: 240px;">
             <label style="display: block; font-size: var(--fs-xs); font-weight: 700; color: var(--navy); margin-bottom: 4px;">
                 Select CSV File
@@ -51,6 +57,7 @@
         </div>
     </form>
 </div>
+{% endif %}
 
 <div class="cards" style="margin-bottom: var(--sp-6);">
     <div class="card">

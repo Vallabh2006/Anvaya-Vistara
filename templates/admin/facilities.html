@@ -159,7 +159,7 @@
 
 {% if current_user and current_user.role == 'system_admin' %}
 <div id="create-facility-modal" class="modal">
-    <div class="modal-dialog" style="max-width: 620px;">
+    <div class="modal-dialog" style="background: var(--white); border-radius: var(--radius-xl); max-width: 620px; width: 100%; box-shadow: var(--shadow-xl); border: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column;">
         <div style="padding: var(--sp-4) var(--sp-6); background: var(--bg); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center;">
             <div>
                 <h3 style="margin: 0; color: var(--navy); font-size: var(--fs-md); font-weight: 700;">Provision New Health Center</h3>
@@ -168,7 +168,8 @@
             <button type="button" onclick="closeCreateFacilityModal()" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--muted);">&times;</button>
         </div>
         
-        <form method="POST" action="/admin/facilities/create" style="padding: var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); max-height: 80vh; overflow-y: auto;">
+        <form method="POST" action="/admin/facilities/create" style="background: var(--white); padding: var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-4); max-height: 80vh; overflow-y: auto;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             
             <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--sp-3);">
                 <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
@@ -218,7 +219,7 @@
 
                 <div class="field" style="display: flex; flex-direction: column; gap: 4px;">
                     <label style="font-size: var(--fs-xs); font-weight: 700; color: var(--navy);">Helpline Phone</label>
-                    <input type="tel" name="phone" placeholder="+91 2692 230000" style="width: 100%; height: 38px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm);">
+                    <input type="tel" name="phone" placeholder="+91 2692 XXXXXX" style="width: 100%; height: 38px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm);">
                 </div>
             </div>
 
@@ -264,7 +265,7 @@
                         </div>
                         <div class="field" style="display: flex; flex-direction: column; gap: 2px;">
                             <label style="font-size: 11px; font-weight: 600; color: var(--navy);">Admin Username <span style="color: var(--red);">*</span></label>
-                            <input type="text" name="admin_username" placeholder="e.g. admin_mogar" style="width: 100%; height: 34px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--fs-xs);">
+                            <input type="text" name="admin_username" placeholder="e.g. admin_mogar" pattern="^[a-z0-9._]{3,30}$" minlength="3" maxlength="30" autocapitalize="none" autocorrect="off" spellcheck="false" oninput="this.value = this.value.toLowerCase()" title="Username must be 3-30 characters long and can only contain lowercase letters, numbers, dots (.), and underscores (_)." style="width: 100%; height: 34px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--fs-xs);">
                         </div>
                     </div>
 

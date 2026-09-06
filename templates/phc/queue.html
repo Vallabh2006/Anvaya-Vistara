@@ -14,10 +14,12 @@
         </p>
     </div>
     <div style="display: flex; gap: var(--sp-2); flex-wrap: wrap;">
+        {% if can('manage_appointments') %}
         <button onclick="document.getElementById('tokenModal').style.display='flex'" class="btn primary"
             style="display: flex; align-items: center; gap: 6px;">
             + Issue OPD Token / Walk-in
         </button>
+        {% endif %}
     </div>
 </div>
 
@@ -167,24 +169,32 @@
                         </td>
                         <td style="padding: var(--sp-3); text-align: right;">
                             <div style="display: flex; gap: 6px; justify-content: flex-end;">
+                                {% if can('manage_appointments') %}
                                 <form method="POST" action="/phc/queue/{{ q.id }}/update-status"
                                     style="display: inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="status" value="in_progress">
                                     <button type="submit" class="btn sm"
                                         style="background: var(--teal); color: #fff; font-weight: 600;">
                                         Call Patient
                                     </button>
                                 </form>
+                                {% endif %}
+                                {% if can('create_consultation') %}
                                 <a href="/phc/consultation/{{ q.patient_id }}" class="btn sm primary">
                                     Consult
                                 </a>
+                                {% endif %}
+                                {% if can('manage_appointments') %}
                                 <form method="POST" action="/phc/queue/{{ q.id }}/update-status"
                                     style="display: inline;" onsubmit="return confirm('Mark token as No Show?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="status" value="no_show">
-                                    <button type="submit" class="btn sm secondary" style="color: #64748b;">
-                                        No Show
+                                    <button type="submit" class="btn sm" style="background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; padding: 4px 10px; border-radius: var(--radius); cursor: pointer;">
+                                        &#10005; No Show
                                     </button>
                                 </form>
+                                {% endif %}
                             </div>
                         </td>
                     </tr>
@@ -228,12 +238,17 @@
                     <span style="font-size: var(--fs-xs); color: var(--muted);">Physician: <strong>{{ c.doctor_name or
                             "Medical Officer" }}</strong></span>
                     <div style="display: flex; gap: 6px;">
+                        {% if can('create_consultation') or can('manage_prescriptions') %}
                         <a href="/phc/consultation/{{ c.patient_id }}" class="btn sm primary">Prescribe & Note</a>
+                        {% endif %}
+                        {% if can('create_consultation') or can('manage_appointments') %}
                         <form method="POST" action="/phc/queue/{{ c.id }}/update-status" style="display: inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="status" value="completed">
                             <button type="submit" class="btn sm"
                                 style="background: #166534; color: #fff;">Finish</button>
                         </form>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -320,12 +335,34 @@
                         <td style="padding: var(--sp-3); font-size: var(--fs-xs);">{{ a.department }}</td>
                         <td style="padding: var(--sp-3);">
                             <span
-                                style="padding: 2px 8px; border-radius: 10px; font-size: 11px; text-transform: uppercase; font-weight: 700; background: {% if a.status == 'completed' %}#dcfce7; color: #166534;{% elif a.status == 'in_progress' %}#dbeafe; color: #1e40af;{% elif a.status == 'no_show' %}#fee2e2; color: #991b1b;{% else %}#fef9c3; color: #854d0e;{% endif %};">
+                                style="padding: 3px 8px; border-radius: 10px; font-size: 11px; text-transform: uppercase; font-weight: 700; background: {% if a.status == 'completed' %}#dcfce7; color: #166534;{% elif a.status == 'in_progress' %}#dbeafe; color: #1e40af;{% elif a.status == 'no_show' %}#fee2e2; color: #991b1b;{% elif a.status == 'cancelled' %}#f1f5f9; color: #64748b;{% else %}#fef9c3; color: #854d0e;{% endif %};">
                                 {{ a.status|replace('_', ' ') }}
                             </span>
                         </td>
                         <td style="padding: var(--sp-3); text-align: right;">
-                            <a href="/phc/consultation/{{ a.patient_id }}" class="btn sm primary">Consult</a>
+                            {% if a.status == 'no_show' %}
+                                {% if can('manage_appointments') %}
+                                <form method="POST" action="/phc/queue/{{ a.id }}/update-status" style="display: inline;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="status" value="checked_in">
+                                    <button type="submit" class="btn sm" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-weight: 700;">Re-Queue</button>
+                                </form>
+                                {% else %}
+                                <span style="color: var(--muted); font-size: 11px;">No Show</span>
+                                {% endif %}
+                            {% elif a.status == 'completed' %}
+                                {% if can('view_records') or can('create_consultation') %}
+                                <a href="/phc/consultation/{{ a.patient_id }}" class="btn sm" style="background: #f1f5f9; color: var(--navy); border: 1px solid var(--line); font-weight: 600;">View Record</a>
+                                {% else %}
+                                <span style="color: var(--muted); font-size: 11px;">Completed</span>
+                                {% endif %}
+                            {% else %}
+                                {% if can('create_consultation') %}
+                                <a href="/phc/consultation/{{ a.patient_id }}" class="btn sm primary">Consult</a>
+                                {% else %}
+                                <span style="color: var(--muted); font-size: 11px;">Scheduled</span>
+                                {% endif %}
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -350,6 +387,7 @@
                 style="background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted);">&times;</button>
         </div>
         <form method="POST" action="/phc/appointments/book">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom: var(--sp-3);">
                 <label
                     style="display: block; font-size: var(--fs-xs); font-weight: 700; color: var(--navy); margin-bottom: 4px;">Select

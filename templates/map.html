@@ -73,6 +73,7 @@
 {% endblock %}
 
 {% block content %}
+{% set initial_fac = facilities[0] if facilities else None %}
 <div class="page-header" style="margin-bottom: var(--sp-4); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--sp-4);">
     <div>
         <h1 style="margin: 0 0 4px; font-size: var(--fs-xl); color: var(--navy); font-weight: 700;">Healthcare Facility Network Map</h1>
@@ -144,12 +145,12 @@
         </div>
 
         <div style="display: flex; gap: var(--sp-3); flex-wrap: wrap;" id="fac-actions">
-            <a id="fac-call-btn" href="tel:+912692236104" class="btn outline">Call Facility</a>
+            <a id="fac-call-btn" href="tel:{{ initial_fac.phone|replace(' ', '') if (initial_fac and initial_fac.phone) else '104' }}" class="btn outline">Call Facility</a>
             <a id="fac-directions-btn" href="#" target="_blank" class="btn" style="background: var(--blue); color: #fff;">
                 Get Directions
             </a>
             {% if current_user and current_user.role != 'patient' %}
-                <a id="fac-profile-btn" href="/facilities/FAC-BAKROL-01" class="btn outline">View Administrative Details</a>
+                <a id="fac-profile-btn" href="/facilities/{{ initial_fac.id if initial_fac else '' }}" class="btn outline">View Administrative Details</a>
             {% endif %}
         </div>
     </div>
@@ -158,21 +159,25 @@
         <div style="background: var(--bg); padding: var(--sp-3); border-radius: var(--radius); border: 1px solid var(--line);">
             <div style="font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 600;">Facility Code / ID</div>
             <div id="fac-id" style="font-size: var(--fs-md); font-weight: 700; color: var(--navy); font-family: var(--mono); margin-top: 2px;">
-                FAC-BAKROL-01
+                {{ initial_fac.id if initial_fac else '-' }}
             </div>
         </div>
 
         <div style="background: var(--bg); padding: var(--sp-3); border-radius: var(--radius); border: 1px solid var(--line);">
             <div style="font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 600;">Location Coordinates</div>
             <div id="fac-coords" style="font-size: var(--fs-sm); font-weight: 600; color: var(--ink); font-family: var(--mono); margin-top: 2px;">
-                22.5488 N, 72.9372 E
+                {% if initial_fac and initial_fac.lat and initial_fac.lng %}
+                    {{ initial_fac.lat|round(4) }} N, {{ initial_fac.lng|round(4) }} E
+                {% else %}
+                    -
+                {% endif %}
             </div>
         </div>
 
         <div style="background: var(--bg); padding: var(--sp-3); border-radius: var(--radius); border: 1px solid var(--line);">
             <div style="font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 600;">Emergency Helpline</div>
             <div id="fac-phone" style="font-size: var(--fs-sm); font-weight: 700; color: var(--navy); margin-top: 2px;">
-                +91 2692 236104
+                {{ initial_fac.phone or 'Contact not available' }}
             </div>
         </div>
 

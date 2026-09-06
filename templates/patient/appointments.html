@@ -204,7 +204,7 @@
                         {% endif %}
                     </td>
                     <td style="padding: var(--sp-3); text-align: right;">
-                        <span style="padding: 3px 8px; border-radius: 10px; font-size: 11px; text-transform: uppercase; font-weight: 700; background: {% if a.status == 'completed' %}#dcfce7; color: #166534;{% elif a.status in ['checked_in', 'in_progress'] %}#dbeafe; color: #1e40af;{% else %}#fef9c3; color: #854d0e;{% endif %};">
+                        <span style="padding: 3px 8px; border-radius: 10px; font-size: 11px; text-transform: uppercase; font-weight: 700; background: {% if a.status == 'completed' %}#dcfce7; color: #166534;{% elif a.status in ['checked_in', 'in_progress'] %}#dbeafe; color: #1e40af;{% elif a.status == 'no_show' %}#fee2e2; color: #991b1b;{% elif a.status == 'cancelled' %}#f1f5f9; color: #64748b;{% else %}#fef9c3; color: #854d0e;{% endif %};">
                             {{ a.status|replace('_', ' ') }}
                         </span>
                     </td>
@@ -231,6 +231,7 @@
             <button onclick="document.getElementById('bookModal').style.display='none'" style="background: none; border: none; font-size: 20px; cursor: pointer; color: var(--muted);">&times;</button>
         </div>
         <form method="POST" action="/patient/appointments/book" onsubmit="return validateSlotTime()">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom: var(--sp-3);">
                 <label style="display: block; font-size: var(--fs-xs); font-weight: 700; color: var(--navy); margin-bottom: 4px;">Select Healthcare Facility *</label>
                 <select name="center_id" required style="width: 100%; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--fs-sm);">

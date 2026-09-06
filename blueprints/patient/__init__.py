@@ -1,8 +1,13 @@
+from utils.id_generator import generate_patient_id
+from utils.notifications import create_notification, notify_patient
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from flask import Blueprint, render_template, redirect, url_for, abort, request, flash
 from utils.auth_helpers import login_required, get_current_user
 from utils.db import query_db, execute_db
+from utils.defaults import get_user_center_id
+from utils.constants import DEFAULT_ALLERGIES, DEFAULT_DISTRICT, DEFAULT_DEPARTMENT, DEFAULT_ONLINE_REASON
+from utils.audit import log_audit
 
 patient_bp = Blueprint('patient', __name__, url_prefix='/patient', template_folder='../../templates/patient')
 
@@ -15,19 +20,19 @@ def format_patient_meta(patient):
         try:
             parsed = json.loads(allergies)
             patient['allergies_list'] = parsed if isinstance(parsed, list) else [str(parsed)]
-        except:
+        except Exception:
             patient['allergies_list'] = [allergies]
     elif isinstance(allergies, list):
         patient['allergies_list'] = allergies
     else:
-        patient['allergies_list'] = ['Not Allergic']
+        patient['allergies_list'] = [DEFAULT_ALLERGIES]
         
     conditions = patient.get('chronic_conditions')
     if isinstance(conditions, str):
         try:
             parsed = json.loads(conditions)
             patient['conditions_list'] = parsed if isinstance(parsed, list) else [str(parsed)]
-        except:
+        except Exception:
             patient['conditions_list'] = [conditions]
     elif isinstance(conditions, list):
         patient['conditions_list'] = conditions
@@ -44,39 +49,87 @@ def user_profile(username=None):
     user = get_current_user()
     
     if not username and user.get('role') != 'patient':
-        patients_list = query_db('SELECT p.*, c.name as facility_id FROM patients p LEFT JOIN centers c ON p.center_id = c.id ORDER BY p.full_name ASC') or []
-        return render_template('patient/list.html', current_user=user, patients=patients_list)
+        search_q = request.args.get('q', '').strip()
+        center_filter = request.args.get('center_id', 'all').strip()
+        risk_filter = request.args.get('risk', 'all').strip()
+        gender_filter = request.args.get('gender', 'all').strip()
+        
+        query = """
+            SELECT p.*, c.name as facility_name, c.region as facility_region, u.username as linked_username 
+            FROM patients p 
+            LEFT JOIN centers c ON p.center_id = c.id 
+            LEFT JOIN users u ON p.linked_user_id = u.id 
+            WHERE 1=1
+        """
+        params = []
+        if search_q:
+            query += " AND (p.full_name LIKE %s OR p.id LIKE %s OR p.phone LIKE %s OR p.blood_group LIKE %s)"
+            term = f"%{search_q}%"
+            params.extend([term, term, term, term])
+        if center_filter and center_filter != 'all':
+            query += " AND p.center_id = %s"
+            params.append(center_filter)
+        if risk_filter and risk_filter != 'all':
+            if risk_filter == 'high':
+                query += " AND p.is_high_risk = 1"
+            elif risk_filter == 'standard':
+                query += " AND (p.is_high_risk = 0 OR p.is_high_risk IS NULL)"
+        if gender_filter and gender_filter != 'all':
+            query += " AND p.gender = %s"
+            params.append(gender_filter)
+            
+        query += " ORDER BY p.created_at DESC, p.full_name ASC"
+        
+        patients_list = query_db(query, tuple(params)) or []
+        for pat in patients_list:
+            format_patient_meta(pat)
+            
+        all_patients = query_db("SELECT id, gender, is_high_risk, center_id FROM patients") or []
+        centers = query_db("SELECT id, name, type FROM centers WHERE is_active = 1 ORDER BY name ASC") or []
+        
+        stats = {
+            'total': len(all_patients),
+            'high_risk': sum(1 for p in all_patients if p.get('is_high_risk')),
+            'male': sum(1 for p in all_patients if p.get('gender') == 'M'),
+            'female': sum(1 for p in all_patients if p.get('gender') == 'F'),
+            'centers_count': len(centers)
+        }
+        
+        return render_template(
+            'patient/list.html', 
+            current_user=user, 
+            patients=patients_list,
+            centers=centers,
+            stats=stats,
+            search_q=search_q,
+            center_filter=center_filter,
+            risk_filter=risk_filter,
+            gender_filter=gender_filter
+        )
 
     if not username:
         username = user.get('username')
-    username = username.strip().lstrip('@')
-    
-    if user['role'] == 'patient' and user['username'] != username:
-        return redirect(f'/patient/@{user["username"]}')
         
+    username = username.strip().lstrip('@')
     target_user = query_db('SELECT * FROM users WHERE username = %s', (username,), one=True)
-    records = []
+    
     patient = None
-    appointments = []
+    facility = None
+    records = []
     prescriptions = []
-    latest_vitals = {}
+    appointments = []
+    referrals = []
+    upcoming_appointment = None
+    latest_vitals = None
     
     if target_user:
         patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (target_user['id'],), one=True)
-        if not patient and user['role'] == 'patient':
-            patient = query_db('SELECT * FROM patients WHERE id = %s', ('PAT-001',), one=True)
-            
         if patient:
             format_patient_meta(patient)
-            raw_records = query_db("""
-                SELECT m.*, u.full_name as doctor_name, c.name as center_name 
-                FROM medical_records m 
-                LEFT JOIN users u ON m.created_by = u.id 
-                LEFT JOIN centers c ON m.center_id = c.id 
-                WHERE m.patient_id = %s 
-                ORDER BY m.created_at DESC
-            """, (patient['id'],)) or []
             
+            if patient.get('center_id'):
+                facility = query_db('SELECT * FROM centers WHERE id = %s', (patient['center_id'],), one=True)
+                
             raw_prescriptions = query_db("""
                 SELECT pr.*, u.full_name as doctor_name, c.name as center_name 
                 FROM prescriptions pr 
@@ -90,33 +143,44 @@ def user_profile(username=None):
                 if isinstance(p.get('medicines'), str):
                     try:
                         p['medicines_parsed'] = json.loads(p['medicines'])
-                    except:
+                    except Exception:
                         p['medicines_parsed'] = []
                 else:
                     p['medicines_parsed'] = p.get('medicines', [])
                 prescriptions.append(p)
 
+            raw_records = query_db("""
+                SELECT m.*, u.full_name as doctor_name, c.name as center_name 
+                FROM medical_records m 
+                LEFT JOIN users u ON m.created_by = u.id 
+                LEFT JOIN centers c ON m.center_id = c.id 
+                WHERE m.patient_id = %s 
+                ORDER BY m.created_at DESC
+            """, (patient['id'],)) or []
+            
             for r in raw_records:
                 if isinstance(r.get('data'), str):
                     try:
                         r['data_parsed'] = json.loads(r['data'])
-                    except:
+                    except Exception:
                         r['data_parsed'] = {}
                 else:
                     r['data_parsed'] = r.get('data', {})
-                
                 r['prescriptions'] = [p for p in prescriptions if p.get('record_id') == r['id']]
                 records.append(r)
                 
-                if r.get('data_parsed') and isinstance(r['data_parsed'], dict):
-                    v = r['data_parsed'].get('vitals')
-                    if isinstance(v, dict):
-                        for k, val in v.items():
-                            if k not in latest_vitals:
-                                latest_vitals[k] = val
-
             appointments = query_db('SELECT * FROM appointments WHERE patient_id = %s ORDER BY slot_time DESC', (patient['id'],)) or []
-            referrals = query_db('''
+            
+            now = datetime.now()
+            for a in appointments:
+                if a.get('slot_time') and a.get('status') in ('scheduled', 'checked_in', 'in_progress'):
+                    upcoming_appointment = a
+                    break
+                    
+            if records:
+                latest_vitals = records[0].get('data_parsed', {})
+
+            referrals = query_db("""
                 SELECT r.*, c_to.name as to_center_name, c_from.name as from_center_name, u.full_name as doctor_name
                 FROM referrals r
                 LEFT JOIN centers c_to ON r.to_center = c_to.id
@@ -124,38 +188,30 @@ def user_profile(username=None):
                 LEFT JOIN users u ON r.created_by = u.id
                 WHERE r.patient_id = %s
                 ORDER BY r.created_at DESC
-            ''', (patient['id'],)) or []
-            
-    return render_template('dashboard/patient.html', current_user=user, profile_username=username, records=records, target_user=target_user, patient=patient, appointments=appointments, prescriptions=prescriptions, latest_vitals=latest_vitals)
+            """, (patient['id'],)) or []
+
+    return render_template('patient/my_records.html', current_user=user, profile_username=username, records=records, target_user=target_user, patient=patient, appointments=appointments, prescriptions=prescriptions, referrals=referrals, upcoming_appointment=upcoming_appointment, latest_vitals=latest_vitals, facility=facility)
 
 
 @patient_bp.route('/records')
 @patient_bp.route('/records/@<username>')
-@patient_bp.route('/medical-records')
-@patient_bp.route('/medical-records/@<username>')
 @login_required
-def patient_records(username=None):
+def my_records(username=None):
     user = get_current_user()
     if not username:
         username = user.get('username')
     username = username.strip().lstrip('@')
-    
-    if user['role'] == 'patient' and user['username'] != username:
-        return redirect(f'/patient/records/@{user["username"]}')
-        
     target_user = query_db('SELECT * FROM users WHERE username = %s', (username,), one=True)
-    records = []
     patient = None
-    appointments = []
+    records = []
     prescriptions = []
+    appointments = []
+    referrals = []
     
     if target_user:
         patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (target_user['id'],), one=True)
-        if not patient:
-            patient = query_db('SELECT * FROM patients WHERE id = %s', ('PAT-001',), one=True)
         if patient:
             format_patient_meta(patient)
-            
             raw_prescriptions = query_db("""
                 SELECT pr.*, u.full_name as doctor_name, c.name as center_name 
                 FROM prescriptions pr 
@@ -169,12 +225,12 @@ def patient_records(username=None):
                 if isinstance(p.get('medicines'), str):
                     try:
                         p['medicines_parsed'] = json.loads(p['medicines'])
-                    except:
+                    except Exception:
                         p['medicines_parsed'] = []
                 else:
                     p['medicines_parsed'] = p.get('medicines', [])
                 prescriptions.append(p)
-                
+
             raw_records = query_db("""
                 SELECT m.*, u.full_name as doctor_name, c.name as center_name 
                 FROM medical_records m 
@@ -188,11 +244,10 @@ def patient_records(username=None):
                 if isinstance(r.get('data'), str):
                     try:
                         r['data_parsed'] = json.loads(r['data'])
-                    except:
+                    except Exception:
                         r['data_parsed'] = {}
                 else:
                     r['data_parsed'] = r.get('data', {})
-                    
                 r['prescriptions'] = [p for p in prescriptions if p.get('record_id') == r['id']]
                 records.append(r)
                 
@@ -222,12 +277,13 @@ def patient_map(username=None):
     facilities = query_db('SELECT * FROM centers ORDER BY name ASC') or []
     for fac in facilities:
         if not fac.get('district'):
-            fac['district'] = fac.get('region') or fac.get('state') or 'Main Region'
-        if not fac.get('phone'):
-            fac['phone'] = '+91 11 2345 6789'
+            fac['district'] = fac.get('region') or fac.get('state') or DEFAULT_DISTRICT
     return render_template('map.html', profile_username=username, current_user=user, facilities=facilities, selected_facility_id=selected_facility_id)
 
 
+@patient_bp.route('/facilities')
+@patient_bp.route('/facilities/@<username>')
+@login_required
 def patient_facilities(username=None):
     user = get_current_user()
     if not username:
@@ -251,6 +307,7 @@ def patient_notifications(username=None):
     notifs = []
     if user:
         notifs = query_db('SELECT * FROM notifications WHERE user_id = %s ORDER BY created_at DESC LIMIT 50', (user['id'],)) or []
+        execute_db('UPDATE notifications SET is_read = 1 WHERE user_id = %s', (user['id'],))
     return render_template('notifications.html', profile_username=username, notifications=notifs, current_user=user)
 
 
@@ -266,9 +323,12 @@ def patient_emergency(username=None):
     username = username.strip().lstrip('@')
     target_user = query_db('SELECT * FROM users WHERE username = %s', (username,), one=True)
     patient = None
+    facility = None
     if target_user:
         patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (target_user['id'],), one=True)
-    return render_template('emergency.html', profile_username=username, patient=patient, current_user=user, target_user=target_user)
+        if target_user.get('center_id'):
+            facility = query_db('SELECT * FROM centers WHERE id = %s', (target_user['center_id'],), one=True)
+    return render_template('emergency.html', profile_username=username, patient=patient, facility=facility, current_user=user, target_user=target_user)
 
 
 @patient_bp.route('/me')
@@ -291,8 +351,8 @@ def patient_detail(patient_id, username=None):
     if not patient:
         abort(404)
         
-    if user['role'] == 'patient' and patient.get('linked_user_id') != user['id']:
-        return redirect(url_for('patient.user_profile', username=user['username']))
+    if user.get('role') == 'patient' and patient.get('linked_user_id') != user.get('id'):
+        abort(403)
         
     format_patient_meta(patient)
     center = query_db('SELECT * FROM centers WHERE id = %s', (patient.get('center_id'),), one=True) or {'name': patient.get('center_id') or 'Primary Health Centre'}
@@ -311,7 +371,7 @@ def patient_detail(patient_id, username=None):
         if isinstance(p.get('medicines'), str):
             try:
                 p['medicines_parsed'] = json.loads(p['medicines'])
-            except:
+            except Exception:
                 p['medicines_parsed'] = []
         else:
             p['medicines_parsed'] = p.get('medicines', [])
@@ -327,26 +387,18 @@ def patient_detail(patient_id, username=None):
     """, (patient['id'],)) or []
     
     records = []
-    latest_vitals = {}
     for r in raw_records:
         if isinstance(r.get('data'), str):
             try:
                 r['data_parsed'] = json.loads(r['data'])
-            except:
+            except Exception:
                 r['data_parsed'] = {}
         else:
             r['data_parsed'] = r.get('data', {})
-            
         r['prescriptions'] = [p for p in prescriptions if p.get('record_id') == r['id']]
         records.append(r)
         
-        if r.get('data_parsed') and isinstance(r['data_parsed'], dict):
-            v = r['data_parsed'].get('vitals')
-            if isinstance(v, dict):
-                for k, val in v.items():
-                    if k not in latest_vitals:
-                        latest_vitals[k] = val
-            
+    latest_vitals = records[0].get('data_parsed', {}) if records else {}
     appointments = query_db('SELECT * FROM appointments WHERE patient_id = %s ORDER BY slot_time DESC', (patient['id'],)) or []
     
     return render_template('patient/detail.html', current_user=user, patient=patient, patient_id=patient_id, center=center, records=records, prescriptions=prescriptions, appointments=appointments, latest_vitals=latest_vitals)
@@ -363,6 +415,8 @@ def patient_teleconsult(username=None):
     target_user = query_db('SELECT * FROM users WHERE username = %s', (username,), one=True)
     patient = None
     sessions = []
+    facilities = query_db("SELECT * FROM centers ORDER BY name ASC") or []
+
     if target_user:
         patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (target_user['id'],), one=True)
         if patient:
@@ -374,14 +428,47 @@ def patient_teleconsult(username=None):
                 WHERE t.patient_id = %s
                 ORDER BY t.created_at DESC
             """, (patient['id'],)) or []
-    return render_template('patient/teleconsult.html', current_user=user, profile_username=username, patient=patient, sessions=sessions)
+    return render_template('patient/teleconsult.html', current_user=user, profile_username=username, patient=patient, sessions=sessions, facilities=facilities)
+
+
+@patient_bp.route('/teleconsult/request', methods=['POST'])
+@login_required
+def patient_request_teleconsult():
+    user = get_current_user()
+    patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (user['id'],), one=True)
+    if not patient:
+        flash('No patient profile is linked to your account.', 'error')
+        return redirect(url_for('patient.user_profile', username=user['username']))
+
+    center_id = (request.form.get('center_id') or get_user_center_id(user) or '').strip()
+    reason = request.form.get('reason', 'Remote General Teleconsultation Request').strip()
+    notes = request.form.get('notes', '').strip()
+
+    doctor = query_db('SELECT id FROM users WHERE role = "doctor" AND (center_id = %s OR center_id IS NULL) AND is_active = 1 LIMIT 1', (center_id,), one=True)
+    doctor_id = doctor['id'] if doctor else None
+
+    session_id = execute_db("""
+        INSERT INTO teleconsult_sessions (patient_id, doctor_id, center_id, status, session_type, chief_complaint, clinical_notes)
+        VALUES (%s, %s, %s, 'requested', 'video', %s, %s)
+    """, (patient['id'], doctor_id, center_id, reason, notes))
+
+    log_audit('patient_requested_teleconsult', 'teleconsult_session', session_id)
+    fac = query_db('SELECT name FROM centers WHERE id = %s', (center_id,), one=True)
+    fac_name = fac['name'] if fac else (center_id or 'Healthcare Center')
+    create_notification(
+        user['id'],
+        'Teleconsultation Request Submitted',
+        f'Your teleconsultation request has been submitted to clinical staff at {fac_name}. Chief complaint: {reason}.',
+        url_for('patient.patient_teleconsult', username=user['username'])
+    )
+    flash('Your teleconsultation request has been submitted to clinical staff.', 'success')
+    return redirect(url_for('patient.patient_teleconsult', username=user['username']))
 
 
 @patient_bp.route('/appointments')
 @patient_bp.route('/appointments/@<username>')
 @login_required
 def patient_appointments(username=None):
-    from datetime import timedelta
     user = get_current_user()
     if not username:
         username = user.get('username')
@@ -395,9 +482,6 @@ def patient_appointments(username=None):
 
     if target_user:
         patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (target_user['id'],), one=True)
-        if not patient:
-            patient = query_db('SELECT * FROM patients WHERE id = %s', ('PAT-2026-0001',), one=True)
-
         if patient:
             raw_appts = query_db("""
                 SELECT a.*, c.name as center_name, c.phone as center_phone, u.full_name as doctor_name
@@ -434,6 +518,9 @@ def patient_appointments(username=None):
                 WHERE r.patient_id = %s
                 ORDER BY r.created_at DESC
             """, (patient['id'],)) or []
+        else:
+            if user.get('role') == 'patient':
+                flash('No patient profile linked to this account.', 'error')
 
     facilities = query_db("SELECT * FROM centers ORDER BY name ASC") or []
     server_time_iso = now.strftime('%Y-%m-%dT%H:%M')
@@ -446,27 +533,23 @@ def patient_appointments(username=None):
 @patient_bp.route('/appointments/book', methods=['POST'])
 @login_required
 def patient_book_appointment():
-    from utils.audit import log_audit
-    from datetime import timedelta
     user = get_current_user()
     patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (user['id'],), one=True)
-    if not patient:
-        patient = query_db('SELECT * FROM patients WHERE id = %s', ('PAT-2026-0001',), one=True)
 
     if not patient:
-        flash('Patient profile not found for booking.', 'error')
+        flash('No patient profile is linked to your account. Please contact the administrator.', 'error')
         return redirect(url_for('patient.user_profile', username=user['username']))
 
-    center_id = (request.form.get('center_id') or 'FAC-BAKROL-01').strip()
-    department = (request.form.get('department') or 'General OPD').strip()
-    reason = (request.form.get('reason') or 'Online Scheduled Consultation').strip()
+    center_id = (request.form.get('center_id') or get_user_center_id(user) or '').strip()
+    department = (request.form.get('department') or DEFAULT_DEPARTMENT).strip()
+    reason = (request.form.get('reason') or DEFAULT_ONLINE_REASON).strip()
     slot_time_str = request.form.get('slot_time')
 
     now = datetime.now()
     if slot_time_str:
         try:
             slot_time = datetime.strptime(slot_time_str, '%Y-%m-%dT%H:%M')
-        except:
+        except Exception:
             slot_time = now
     else:
         slot_time = now
@@ -488,5 +571,50 @@ def patient_book_appointment():
     """, (patient['id'], center_id, token_number, department, slot_time, reason))
 
     log_audit('patient_booked_appointment', 'appointment', appt_id)
+    fac = query_db('SELECT name FROM centers WHERE id = %s', (center_id,), one=True)
+    fac_name = fac['name'] if fac else (center_id or 'Healthcare Center')
+    create_notification(
+        user['id'],
+        f'Appointment Confirmed (Token #{token_number})',
+        f'Your OPD appointment at {fac_name} is scheduled for {slot_time.strftime("%b %d, %Y at %I:%M %p")}. Department: {department}. Token #{token_number}.',
+        url_for('patient.patient_appointments', username=user['username'])
+    )
     flash(f"Appointment successfully scheduled! Your OPD Token is #{token_number}.", 'success')
     return redirect(url_for('patient.patient_appointments', username=user['username']))
+
+@patient_bp.route('/add', methods=['POST'])
+@login_required
+def add_patient():
+    user = get_current_user()
+    if user.get('role') not in ('doctor', 'nurse', 'receptionist', 'care_taker', 'region_admin', 'system_admin'):
+        flash('Unauthorized to register patients.', 'error')
+        return redirect(url_for('patient.user_profile'))
+        
+    full_name = request.form.get('full_name', '').strip()
+    dob = request.form.get('dob', '').strip()
+    gender = request.form.get('gender', 'M').strip()
+    phone = request.form.get('phone', '').strip()
+    blood_group = request.form.get('blood_group', 'O+').strip()
+    center_id = request.form.get('center_id', '').strip() or get_user_center_id(user)
+    address = request.form.get('address', '').strip()
+    allergies = request.form.get('allergies', '').strip()
+    chronic_conditions = request.form.get('chronic_conditions', '').strip()
+    is_high_risk = 1 if request.form.get('is_high_risk') in ('1', 'on', 'true', True) else 0
+    
+    if not full_name or not dob or not phone:
+        flash('Full name, date of birth, and phone number are required.', 'error')
+        return redirect(url_for('patient.user_profile'))
+        
+    allergies_json = json.dumps([a.strip() for a in allergies.split(',') if a.strip()]) if allergies else json.dumps([DEFAULT_ALLERGIES])
+    conditions_json = json.dumps([c.strip() for c in chronic_conditions.split(',') if c.strip()]) if chronic_conditions else json.dumps([])
+    
+    pat_id = generate_patient_id()
+    
+    execute_db("""
+        INSERT INTO patients (id, full_name, dob, gender, phone, address, blood_group, center_id, allergies, chronic_conditions, is_high_risk)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (pat_id, full_name, dob, gender, phone, address, blood_group, center_id, allergies_json, conditions_json, is_high_risk))
+    
+    log_audit(user.get('id'), 'REGISTER_PATIENT', f"Registered patient {pat_id} ({full_name})", request.remote_addr)
+    flash(f"Patient {full_name} ({pat_id}) successfully registered in registry.", "success")
+    return redirect(url_for('patient.patient_detail', patient_id=pat_id))

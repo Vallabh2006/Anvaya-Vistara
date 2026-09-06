@@ -1,11 +1,33 @@
 import os
-from flask import Flask, render_template, redirect, url_for, session, jsonify, request, flash
+import json
+import re
+from flask import Flask, render_template, redirect, url_for, session, jsonify, request, flash, abort
 from flask_session import Session
+from flask_wtf.csrf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_cors import CORS
 
 from config import config_map
-from utils.db import init_db, query_db
+from utils.db import init_db, query_db, execute_db
 from utils.i18n import init_i18n
 from utils.auth_helpers import get_current_user
+from utils.defaults import get_user_center_id, get_center_or_404
+from utils.constants import DEFAULT_ALLERGIES, DEFAULT_DISTRICT, DEFAULT_DEPARTMENT, DEFAULT_WALK_IN_REASON, DEFAULT_ONLINE_REASON
+
+class CustomCSRFProtect(CSRFProtect):
+    def protect(self):
+        from flask import current_app
+        if current_app.testing or current_app.config.get('TESTING') or not current_app.config.get('WTF_CSRF_ENABLED', True):
+            return
+        super().protect()
+
+csrf = CustomCSRFProtect()
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200 per day", "60 per hour"],
+    storage_uri="memory://"
+)
 
 
 def create_app(config_name=None):
@@ -14,10 +36,20 @@ def create_app(config_name=None):
 
     app = Flask(__name__)
     app.config.from_object(config_map.get(config_name, config_map['default']))
+    if app.config.get('TESTING'):
+        app.config['WTF_CSRF_ENABLED'] = False
 
     Session(app)
     init_db(app)
     init_i18n(app)
+    csrf.init_app(app)
+    limiter.init_app(app)
+    cors_origins_env = os.getenv('CORS_ALLOWED_ORIGINS')
+    if cors_origins_env:
+        allowed_origins = [o.strip() for o in cors_origins_env.split(',') if o.strip()]
+    else:
+        allowed_origins = [r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"]
+    CORS(app, resources={r"/api/*": {"origins": allowed_origins}}, supports_credentials=True)
 
     from utils.email_helper import mask_email
 
@@ -64,6 +96,42 @@ def create_app(config_name=None):
                 pass
         return dict(current_user=user, has_permission=has_permission, can=can)
 
+    @app.before_request
+    def check_testing_and_session():
+        if app.config.get('TESTING'):
+            app.config['WTF_CSRF_ENABLED'] = False
+        validate_user_session_logic()
+
+    def validate_user_session_logic():
+        if 'user_id' in session and 'session_version' in session:
+            try:
+                row = query_db('SELECT session_version, is_active FROM users WHERE id = %s', (session['user_id'],), one=True)
+                if not row or not row.get('is_active') or row.get('session_version', 1) != session.get('session_version'):
+                    session.clear()
+                    flash('Your session has expired or was invalidated. Please log in again.', 'warning')
+                    return redirect(url_for('auth.login'))
+            except Exception:
+                pass
+
+    @app.after_request
+    def set_security_headers(response):
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(self)'
+        if not app.debug:
+            response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+            response.headers['Content-Security-Policy'] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://unpkg.com; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; "
+                "font-src 'self' https://fonts.gstatic.com; "
+                "img-src 'self' data: https://*.tile.openstreetmap.org; "
+                "connect-src 'self'"
+            )
+        return response
+
     from blueprints.auth import auth_bp
     from blueprints.phc import phc_bp
     from blueprints.region import region_bp
@@ -72,6 +140,8 @@ def create_app(config_name=None):
     from blueprints.center import center_bp
     from blueprints.api import api_bp
     from blueprints.dashboard import dashboard_bp
+
+    csrf.exempt(api_bp)
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(phc_bp)
@@ -84,6 +154,12 @@ def create_app(config_name=None):
 
     @app.route('/')
     def landing():
+        if 'user_id' in session:
+            return redirect(url_for('auth.app_redirect'))
+        return render_template('landing.html')
+
+    @app.route('/home')
+    def landinghome():
         if 'user_id' in session:
             return redirect(url_for('auth.app_redirect'))
         return render_template('landing.html')
@@ -105,7 +181,6 @@ def create_app(config_name=None):
         user = get_current_user()
         facility = query_db('SELECT * FROM centers WHERE id = %s', (facility_id,), one=True)
         if not facility:
-            from flask import abort
             abort(404)
         if not facility.get('district'):
             facility['district'] = facility.get('region') or facility.get('state') or 'Main Center'
@@ -144,9 +219,7 @@ def create_app(config_name=None):
         facilities = query_db('SELECT * FROM centers ORDER BY name ASC') or []
         for fac in facilities:
             if not fac.get('district'):
-                fac['district'] = fac.get('region') or fac.get('state') or 'Main Region'
-            if not fac.get('phone'):
-                fac['phone'] = '+91 11 2345 6789'
+                fac['district'] = fac.get('region') or fac.get('state') or DEFAULT_DISTRICT
         if user and user.get('username'):
             return redirect(f'/patient/map/@{user["username"]}?facility={selected_facility_id}' if selected_facility_id else f'/patient/map/@{user["username"]}') if user.get('role') == 'patient' else render_template('map.html', profile_username=user.get('username'), current_user=user, facilities=facilities, selected_facility_id=selected_facility_id)
         return render_template('map.html', profile_username=None, current_user=user, facilities=facilities, selected_facility_id=selected_facility_id)
@@ -159,9 +232,7 @@ def create_app(config_name=None):
         facilities = query_db('SELECT * FROM centers ORDER BY name ASC') or []
         for fac in facilities:
             if not fac.get('district'):
-                fac['district'] = fac.get('region') or fac.get('state') or 'Main Region'
-            if not fac.get('phone'):
-                fac['phone'] = '+91 11 2345 6789'
+                fac['district'] = fac.get('region') or fac.get('state') or DEFAULT_DISTRICT
         return render_template('map.html', profile_username=username, current_user=user, facilities=facilities, selected_facility_id=selected_facility_id)
 
     @app.route('/emergency')
@@ -178,37 +249,36 @@ def create_app(config_name=None):
         user = get_current_user()
         target_user = query_db('SELECT * FROM users WHERE username = %s', (username,), one=True)
         patient = None
+        facility = None
         if target_user:
             patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (target_user['id'],), one=True)
-        return render_template('emergency.html', profile_username=username, patient=patient, current_user=user, target_user=target_user)
+            if target_user.get('center_id'):
+                facility = query_db('SELECT * FROM centers WHERE id = %s', (target_user['center_id'],), one=True)
+        return render_template('emergency.html', profile_username=username, current_user=user, target_user=target_user, patient=patient, facility=facility)
 
     @app.route('/records/@<username>')
-    @app.route('/medical-records/@<username>')
-    def records_view_user(username):
-        import json
+    def records_view(username):
         username = username.strip().lstrip('@')
         user = get_current_user()
         target_user = query_db('SELECT * FROM users WHERE username = %s', (username,), one=True)
         records = []
+        prescriptions = []
         patient = None
         appointments = []
-        prescriptions = []
         if target_user:
             patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (target_user['id'],), one=True)
-            if not patient:
-                patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (target_user['id'],), one=True)
             if patient:
                 allergies = patient.get('allergies')
                 if isinstance(allergies, str):
                     try:
                         parsed = json.loads(allergies)
                         patient['allergies_list'] = parsed if isinstance(parsed, list) else [str(parsed)]
-                    except:
+                    except Exception:
                         patient['allergies_list'] = [allergies]
                 elif isinstance(allergies, list):
                     patient['allergies_list'] = allergies
                 else:
-                    patient['allergies_list'] = ['Not Allergic']
+                    patient['allergies_list'] = [DEFAULT_ALLERGIES]
                     
                 raw_prescriptions = query_db("""
                     SELECT pr.*, u.full_name as doctor_name, c.name as center_name 
@@ -222,7 +292,7 @@ def create_app(config_name=None):
                     if isinstance(p.get('medicines'), str):
                         try:
                             p['medicines_parsed'] = json.loads(p['medicines'])
-                        except:
+                        except Exception:
                             p['medicines_parsed'] = []
                     else:
                         p['medicines_parsed'] = p.get('medicines', [])
@@ -240,7 +310,7 @@ def create_app(config_name=None):
                     if isinstance(r.get('data'), str):
                         try:
                             r['data_parsed'] = json.loads(r['data'])
-                        except:
+                        except Exception:
                             r['data_parsed'] = {}
                     else:
                         r['data_parsed'] = r.get('data', {})
@@ -257,6 +327,7 @@ def create_app(config_name=None):
         notifs = []
         if user:
             notifs = query_db('SELECT * FROM notifications WHERE user_id = %s ORDER BY created_at DESC LIMIT 50', (user['id'],)) or []
+            execute_db('UPDATE notifications SET is_read = 1 WHERE user_id = %s', (user['id'],))
         return render_template('notifications.html', profile_username=username, notifications=notifs, current_user=user)
 
     @app.route('/notifications')
@@ -269,13 +340,10 @@ def create_app(config_name=None):
     @app.route('/settings', methods=['GET', 'POST'])
     @app.route('/settings/@<username>', methods=['GET', 'POST'])
     def settings_view(username=None):
-        import json
-        import re
         import secrets
         import time
         import bcrypt
         from utils.audit import log_audit
-        from utils.db import execute_db
         from utils.email_helper import send_email_change_otp
         
         user = get_current_user()
@@ -296,8 +364,9 @@ def create_app(config_name=None):
             if not patient:
                 from utils.id_generator import generate_patient_id
                 pat_id = generate_patient_id()
+                cid = get_user_center_id(current_db_user)
                 execute_db('INSERT INTO patients (id, linked_user_id, full_name, center_id, allergies) VALUES (%s, %s, %s, %s, %s)', 
-                           (pat_id, current_db_user['id'], current_db_user['full_name'], current_db_user.get('center_id') or 'FAC-BAKROL-01', json.dumps(['Not Allergic'])))
+                           (pat_id, current_db_user['id'], current_db_user['full_name'], cid, json.dumps([DEFAULT_ALLERGIES])))
                 patient = query_db('SELECT * FROM patients WHERE linked_user_id = %s', (current_db_user['id'],), one=True)
 
         if request.method == 'POST':
@@ -357,6 +426,8 @@ def create_app(config_name=None):
                     errors.append('Current password is required to set a new password.')
                 elif not new_pass or len(new_pass) < 8:
                     errors.append('New password must be at least 8 characters long.')
+                elif not re.search(r'[A-Z]', new_pass) or not re.search(r'[a-z]', new_pass) or not re.search(r'[0-9]', new_pass) or not re.search(r'[^A-Za-z0-9]', new_pass):
+                    errors.append('New password must contain at least 1 uppercase letter, 1 lowercase letter, 1 digit, and 1 special character.')
                 elif new_pass != conf_pass:
                     errors.append('New password and confirmation do not match.')
                 elif password_verified:
@@ -386,7 +457,7 @@ def create_app(config_name=None):
                         allergies_list = [x.strip() for x in allergies_raw.split(',') if x.strip()]
                 
                 if not allergies_list:
-                    allergies_list = ['Not Allergic']
+                    allergies_list = [DEFAULT_ALLERGIES]
 
                 conditions_list = []
                 if chronic_conditions_raw:
@@ -409,7 +480,9 @@ def create_app(config_name=None):
 
                 if update_password:
                     hashed = bcrypt.hashpw(new_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                    execute_db('UPDATE users SET password_hash = %s WHERE id = %s', (hashed, current_db_user['id']))
+                    new_version = current_db_user.get('session_version', 1) + 1
+                    execute_db('UPDATE users SET password_hash = %s, session_version = %s WHERE id = %s', (hashed, new_version, current_db_user['id']))
+                    session['session_version'] = new_version
                     log_audit('password_changed_by_user', 'user', current_db_user['id'])
 
                 if current_db_user['role'] == 'patient' and patient:
@@ -441,11 +514,11 @@ def create_app(config_name=None):
                     parsed = json.loads(raw_allergies)
                     patient['allergies_list'] = parsed if isinstance(parsed, list) else [str(parsed)]
                 except Exception:
-                    patient['allergies_list'] = [raw_allergies] if raw_allergies else ['Not Allergic']
+                    patient['allergies_list'] = [raw_allergies] if raw_allergies else [DEFAULT_ALLERGIES]
             elif isinstance(raw_allergies, list):
                 patient['allergies_list'] = raw_allergies
             else:
-                patient['allergies_list'] = ['Not Allergic']
+                patient['allergies_list'] = [DEFAULT_ALLERGIES]
                 
             raw_conditions = patient.get('chronic_conditions')
             if isinstance(raw_conditions, str):
@@ -466,7 +539,6 @@ def create_app(config_name=None):
     def settings_verify_email():
         import time
         from utils.audit import log_audit
-        from utils.db import execute_db
         
         user = get_current_user()
         if not user:
@@ -531,36 +603,16 @@ def create_app(config_name=None):
         flash('Email address update request has been cancelled.', 'info')
         return redirect('/settings')
 
-    @app.route('/api/time')
-    def server_world_time():
-        import time
-        from datetime import datetime
-        now = datetime.now()
-        return jsonify({
-            'ok': True,
-            'epoch_ms': int(time.time() * 1000),
-            'iso': now.isoformat(),
-            'timezone': 'Asia/Kolkata (IST)',
-            'formatted': now.strftime('%b %d, %Y - %I:%M:%S %p'),
-            'date': now.strftime('%Y-%m-%d'),
-            'time': now.strftime('%H:%M')
-        })
 
-    @app.route('/api/auth/set-lang', methods=['POST'])
-    def set_lang():
-        data = request.get_json(silent=True) or {}
-        lang = data.get('lang', 'en')
-        session['lang'] = lang
 
-        if 'user_id' in session:
-            try:
-                from utils.db import execute_db
-                execute_db('UPDATE users SET lang_pref = %s WHERE id = %s', (lang, session['user_id']))
-            except Exception:
-                pass
-        resp = jsonify({'ok': True, 'lang': lang})
-        resp.set_cookie('lang', lang, max_age=365*24*3600)
-        return resp
+    @app.errorhandler(429)
+    def ratelimit_handler(e):
+        from utils.audit import log_audit
+        log_audit('rate_limit_exceeded', 'ip', request.remote_addr, {'description': str(e.description)})
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Rate limit exceeded', 'message': str(e.description)}), 429
+        flash('Too many requests. Please slow down and try again in a moment.', 'error')
+        return render_template('errors/403.html'), 429
 
     @app.errorhandler(404)
     def not_found(e):
@@ -586,4 +638,5 @@ def create_app(config_name=None):
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app = create_app()
-    app.run(debug=True, host='0.0.0.0', port=port)
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() in ('true', '1', 't')
+    app.run(debug=debug_mode, host='0.0.0.0', port=port)

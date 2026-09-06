@@ -32,6 +32,7 @@
     </div>
 
     <form method="POST" action="/admin/inventory/import" enctype="multipart/form-data" style="display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div style="flex: 1; min-width: 240px;">
             <label style="display: block; font-size: var(--fs-xs); font-weight: 700; color: var(--navy); margin-bottom: 4px;">
                 Select CSV File
