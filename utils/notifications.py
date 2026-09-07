@@ -1,14 +1,9 @@
-"""
-Notification helper utilities for creating and dispatching notifications.
-"""
 from datetime import datetime
 from utils.db import query_db, execute_db
 
 
 def create_notification(user_id, title, body, link=None):
-    """
-    Inserts a notification record into the notifications table.
-    """
+
     if not user_id or not title:
         return None
     try:
@@ -26,10 +21,7 @@ def create_notification(user_id, title, body, link=None):
 
 
 def notify_patient(patient_id, title, body, link=None):
-    """
-    Looks up the linked user ID for a given patient_id (or patient object)
-    and creates a notification if the linked user exists.
-    """
+
     if not patient_id or not title:
         return None
 
